@@ -6,3 +6,5 @@ logs/
 *.pyo
 .env
 users.txt
+registration_requests.json
+site_config.json

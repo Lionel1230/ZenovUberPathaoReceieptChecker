@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zenov Conveyance Management — Request Invitation</title>
+  <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='pdf.ico') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="maintenance-banner hidden" id="maintenanceBanner">
+      <span id="maintenanceText"></span>
+    </div>
+
+    <div class="login-card card">
+      <div class="login-header">
+        <img src="{{ url_for('static', filename='Zenov_Logo_BG.png') }}" alt="Zenov" width="220" height="220" />
+        <h1>Zenov Conveyance Management</h1>
+        <span class="beta-tag">BETA</span>
+        <p class="subtitle">Request an invitation to join</p>
+      </div>
+
+      <div class="alert hidden" id="regError"></div>
+      <div class="alert hidden" id="regSuccess"></div>
+
+      <div class="login-form">
+        <div class="field">
+          <label for="regName">First and Last Name</label>
+          <input type="text" id="regName" placeholder="e.g. Julker Naine" required />
+        </div>
+        <div class="field">
+          <label for="regTeam">Team Name</label>
+          <input type="text" id="regTeam" placeholder="e.g. ORD" required />
+        </div>
+        <div class="field">
+          <label for="regGmail">Gmail Address</label>
+          <input type="email" id="regGmail" placeholder="you@gmail.com" required />
+        </div>
+        <div class="reg-btn-row">
+          <button class="btn btn-green login-btn" id="submitRegBtn">Submit</button>
+          <button class="btn btn-secondary login-btn hidden" id="forceRegBtn">Force Resubmit</button>
+        </div>
+      </div>
+
+      <div class="login-footer">
+        <a href="{{ url_for('login') }}" class="back-link">Back to Login</a>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <p class="daily-quote hidden" id="dailyQuote"></p>
+      <p class="credit">Designed by <strong class="credit-name">Julker Naine Jakaria</strong></p>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var errorEl = document.getElementById("regError");
+      var successEl = document.getElementById("regSuccess");
+      var forceBtn = document.getElementById("forceRegBtn");
+      var pendingData = null;
+
+      function hideAlerts() {
+        errorEl.classList.add("hidden");
+        successEl.classList.add("hidden");
+      }
+
+      function submitRequest(force) {
+        hideAlerts();
+        var data = {
+          name: document.getElementById("regName").value.trim(),
+          team: document.getElementById("regTeam").value.trim(),
+          gmail: document.getElementById("regGmail").value.trim(),
+          force: force,
+        };
+        if (!data.name || !data.team || !data.gmail) {
+          errorEl.textContent = "All fields are required";
+          errorEl.classList.remove("hidden");
+          errorEl.classList.add("error");
+          return;
+        }
+
+        fetch("/api/register-request", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        })
+          .then(function (r) {
+            return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+          })
+          .then(function (res) {
+            if (res.ok) {
+              successEl.textContent = res.data.message;
+              successEl.classList.remove("hidden");
+              successEl.classList.add("success");
+              forceBtn.classList.add("hidden");
+              pendingData = null;
+            } else {
+              errorEl.textContent = res.data.error;
+              errorEl.classList.remove("hidden");
+              errorEl.classList.add("error");
+              if (res.data.duplicate) {
+                pendingData = data;
+                forceBtn.classList.remove("hidden");
+              }
+            }
+          })
+          .catch(function () {
+            errorEl.textContent = "Network error. Please try again.";
+            errorEl.classList.remove("hidden");
+            errorEl.classList.add("error");
+          });
+      }
+
+      document.getElementById("submitRegBtn").addEventListener("click", function () {
+        submitRequest(false);
+      });
+
+      forceBtn.addEventListener("click", function () {
+        submitRequest(true);
+      });
+
+      fetch("/api/site-config")
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          if (d.maintenance_message) {
+            document.getElementById("maintenanceText").textContent = d.maintenance_message;
+            document.getElementById("maintenanceBanner").classList.remove("hidden");
+          }
+          if (d.daily_quote) {
+            var el = document.getElementById("dailyQuote");
+            el.textContent = "\u201C" + d.daily_quote + "\u201D";
+            el.classList.remove("hidden");
+          }
+        })
+        .catch(function () {});
+    })();
+  </script>
+</body>
+</html>

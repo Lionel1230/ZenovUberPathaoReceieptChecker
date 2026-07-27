@@ -20,6 +20,7 @@
         <p class="subtitle header-warning hidden" id="headerWarning">Do not upload modified PDF files. You must take all responsibility of your uploaded files.</p>
         <button class="btn btn-secondary btn-sm hidden" id="manageUsersBtn">Manage Users</button>
         <button class="btn btn-secondary btn-sm hidden" id="uploadsBtn">Uploads</button>
+        <button class="btn btn-secondary btn-sm hidden" id="regRequestsBtn">Requests</button>
         <button class="btn btn-secondary btn-sm hidden" id="siteSettingsBtn">Site Settings</button>
         <a href="{{ url_for('logout') }}" class="btn btn-danger btn-sm">Logout</a>
       </div>
@@ -124,7 +125,10 @@
     <div class="modal card" id="userModal">
       <div class="modal-header">
         <h2 class="section-title">Manage Users</h2>
-        <button class="btn-icon" id="closeUserModal" title="Close">✕</button>
+        <div class="modal-header-actions">
+          <button class="btn btn-secondary btn-sm" id="togglePasswordsBtn">Show Passwords</button>
+          <button class="btn-icon" id="closeUserModal" title="Close">✕</button>
+        </div>
       </div>
 
       <div class="user-list" id="userList"></div>
@@ -187,6 +191,16 @@
 
       <button class="btn btn-primary" id="saveSiteSettingsBtn">Save Settings</button>
       <div class="alert hidden" id="siteSettingsAlert"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="regRequestsOverlay">
+    <div class="modal card uploads-modal" id="regRequestsModal">
+      <div class="modal-header">
+        <h2 class="section-title">Registration Requests</h2>
+        <button class="btn-icon" id="closeRegRequests" title="Close">✕</button>
+      </div>
+      <div id="regRequestsList"></div>
     </div>
   </div>
 

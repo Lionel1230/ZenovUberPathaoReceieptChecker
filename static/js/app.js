@@ -38,12 +38,14 @@
     const btn = document.getElementById("manageUsersBtn");
     const uploadsBtn = document.getElementById("uploadsBtn");
     const siteSettingsBtn = document.getElementById("siteSettingsBtn");
+    const regRequestsBtn = document.getElementById("regRequestsBtn");
     const title = document.getElementById("headerTitle");
     const subtitle = document.getElementById("headerSubtitle");
     const warning = document.getElementById("headerWarning");
     if (btn) btn.classList.toggle("hidden", !isAdmin);
     if (uploadsBtn) uploadsBtn.classList.toggle("hidden", !isAdmin);
     if (siteSettingsBtn) siteSettingsBtn.classList.toggle("hidden", !isAdmin);
+    if (regRequestsBtn) regRequestsBtn.classList.toggle("hidden", !isAdmin);
     if (title) title.textContent = "Zenov Conveyance Management";
     if (subtitle) subtitle.classList.toggle("hidden", !isAdmin);
     if (warning) warning.classList.toggle("hidden", isAdmin);
@@ -153,6 +155,7 @@
       renderStaging();
       showSuccess(data.message);
       loadMySubmissions();
+
       busy = false;
     } catch (_) {
       showError("Network error during submit");
@@ -358,10 +361,14 @@
     document.getElementById("userModalOverlay").classList.add("hidden");
   }
 
+  let showPasswords = false;
+
   async function loadUserList() {
     const list = document.getElementById("userList");
     try {
-      const res = await fetch("/api/users");
+      const res = showPasswords
+        ? await fetch("/api/users/with-passwords")
+        : await fetch("/api/users");
       if (!res.ok) return;
       const data = await res.json();
       list.innerHTML = data.users
@@ -369,6 +376,7 @@
           (u) => `
           <div class="user-row">
             <span class="user-name">${escapeHtml(u.username)}</span>
+            ${showPasswords && u.password ? `<span class="user-password">${escapeHtml(u.password)}</span>` : ""}
             ${u.username !== "root" && u.username !== currentUser ? `<button class="btn-icon btn-danger-icon" data-delete="${escapeHtml(u.username)}" title="Delete user">✕</button>` : ""}
           </div>`
         )
@@ -446,11 +454,12 @@
           const sizeMB = (f.size / (1024 * 1024)).toFixed(2);
           const remaining = formatRemaining(f.remaining);
           return `
-          <div class="my-submission-item">
+          <div class="my-submission-item${f.duplicate ? " is-duplicate" : ""}">
             <div class="my-submission-info">
               <span class="my-submission-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
               <span class="my-submission-meta">${sizeMB} MB${f.can_delete ? " · " + remaining : " · Delete expired"}</span>
             </div>
+            ${f.duplicate ? `<span class="my-submission-dup-badge">Duplicate</span>` : ""}
             ${f.can_delete ? `<button class="btn-icon btn-danger-icon" data-my-delete="${escapeHtml(f.name)}" title="Delete">✕</button>` : ""}
           </div>`;
         })
@@ -518,7 +527,12 @@
             <div class="admin-user-card${u.count === 0 ? " no-uploads" : ""}">
               <div class="admin-user-header">
                 <span class="admin-user-name">${escapeHtml(u.username)}</span>
-                <span class="admin-file-count ${u.count === 0 ? "text-muted" : ""}">${u.count === 0 ? "No uploads" : u.count + " file(s)"}</span>
+                <div class="admin-user-actions">
+                  ${u.count > 0 ? `
+                  <button class="btn btn-secondary btn-sm open-folder-btn" data-open-folder="${escapeHtml(u.username)}" title="Open this user's folder in Explorer">Open Folder</button>
+                  ` : ""}
+                  <span class="admin-file-count ${u.count === 0 ? "text-muted" : ""}">${u.count === 0 ? "No uploads" : u.count + " file(s)"}</span>
+                </div>
               </div>
               ${u.count > 0 ? `
               <div class="admin-file-list">
@@ -531,6 +545,7 @@
                   <div class="admin-file-row">
                     <span class="admin-file-name">${escapeHtml(f.name)}</span>
                     <span class="admin-file-verdict ${verdictClass}">${verdictLabel}</span>
+                    ${f.duplicate ? `<span class="admin-file-verdict verdict-duplicate">Duplicate</span>` : ""}
                     ${source ? `<span class="admin-file-source">${escapeHtml(source)}</span>` : ""}
                     <button class="btn-icon btn-danger-icon" data-modal-delete="${escapeHtml(u.username)}/${escapeHtml(f.name)}" title="Delete">✕</button>
                   </div>`;
@@ -541,6 +556,9 @@
           .join("");
         list.querySelectorAll("[data-modal-delete]").forEach((btn) => {
           btn.addEventListener("click", () => modalDeleteFile(btn.getAttribute("data-modal-delete")));
+        });
+        list.querySelectorAll("[data-open-folder]").forEach((btn) => {
+          btn.addEventListener("click", () => openUserFolder(btn.dataset.openFolder));
         });
       }
     } catch (_) {
@@ -553,6 +571,75 @@
     try {
       const res = await fetch(`/api/admin/uploads/${path}`, { method: "DELETE" });
       if (res.ok) loadUploadsModal();
+    } catch (_) {}
+  }
+
+  async function openUserFolder(username) {
+    try {
+      await fetch(`/api/admin/open-folder/${encodeURIComponent(username)}`);
+    } catch (_) {}
+  }
+
+  /* Registration Requests */
+  function openRegRequests() {
+    document.getElementById("regRequestsOverlay").classList.remove("hidden");
+    loadRegRequests();
+  }
+
+  function closeRegRequests() {
+    document.getElementById("regRequestsOverlay").classList.add("hidden");
+  }
+
+  async function loadRegRequests() {
+    const list = document.getElementById("regRequestsList");
+    try {
+      const res = await fetch("/api/admin/registration-requests");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.requests.length === 0) {
+        list.innerHTML = '<p class="text-muted">No requests yet</p>';
+      } else {
+        list.innerHTML = data.requests
+          .map(
+            (r) => `
+            <div class="reg-request-card">
+              <div class="reg-request-header">
+                <span class="reg-request-name">${escapeHtml(r.name)}</span>
+                <button class="btn-icon btn-danger-icon" data-delete-reg="${escapeHtml(r.gmail)}" title="Remove">✕</button>
+              </div>
+              <div class="reg-request-details">
+                <span class="reg-request-team">${escapeHtml(r.team)}</span>
+                <span class="reg-request-gmail">${escapeHtml(r.gmail)}</span>
+                <button class="btn-icon copy-gmail-btn" data-copy="${escapeHtml(r.gmail)}" title="Copy email">⧉</button>
+              </div>
+            </div>`
+          )
+          .join("");
+        list.querySelectorAll("[data-copy]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            navigator.clipboard.writeText(btn.dataset.copy);
+            btn.textContent = "✓";
+            setTimeout(() => { btn.textContent = "⧉"; }, 1500);
+          });
+        });
+        list.querySelectorAll("[data-delete-reg]").forEach((btn) => {
+          btn.addEventListener("click", () => deleteRegRequest(btn.dataset.deleteReg));
+        });
+      }
+    } catch (_) {
+      list.innerHTML = '<p class="text-muted">Failed to load requests</p>';
+    }
+  }
+
+  async function deleteRegRequest(gmail) {
+    if (!confirm("Remove this request?")) return;
+    try {
+      const res = await fetch("/api/admin/registration-requests", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gmail }),
+      });
+      if (res.ok) loadRegRequests();
     } catch (_) {}
   }
 
@@ -710,6 +797,11 @@
   document.getElementById("generatePwBtn").addEventListener("click", () => {
     document.getElementById("newPassword").value = generatePassword(16);
   });
+  document.getElementById("togglePasswordsBtn").addEventListener("click", () => {
+    showPasswords = !showPasswords;
+    document.getElementById("togglePasswordsBtn").textContent = showPasswords ? "Hide Passwords" : "Show Passwords";
+    loadUserList();
+  });
   document.getElementById("submitFilesBtn").addEventListener("click", submitStagedFiles);
   document.getElementById("clearStagingBtn").addEventListener("click", () => {
     stagedFiles = [];
@@ -730,6 +822,12 @@
     if (e.target === e.currentTarget) closeSiteSettings();
   });
   document.getElementById("saveSiteSettingsBtn").addEventListener("click", saveSiteSettings);
+
+  document.getElementById("regRequestsBtn").addEventListener("click", openRegRequests);
+  document.getElementById("closeRegRequests").addEventListener("click", closeRegRequests);
+  document.getElementById("regRequestsOverlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeRegRequests();
+  });
 
   updateAdminUI();
   loadSiteConfig();

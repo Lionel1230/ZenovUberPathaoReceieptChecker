@@ -309,6 +309,18 @@ body {
   background: #222230;
 }
 
+.btn-green {
+  background: #16a34a;
+  color: #fff;
+  border: 1px solid #16a34a;
+}
+
+.btn-green:hover {
+  background: #15803d;
+  border-color: #15803d;
+  box-shadow: 0 0 15px rgba(22, 163, 74, 0.3);
+}
+
 .btn-danger {
   background: #dc2626;
   color: #fff;
@@ -477,6 +489,18 @@ body {
   margin-bottom: 1.25rem;
 }
 
+.alert.error {
+  background: var(--fake-bg);
+  border-color: var(--fake);
+  color: var(--fake);
+}
+
+.alert.success {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: #34d399;
+  color: #34d399;
+}
+
 /* Footer */
 .footer {
   text-align: center;
@@ -595,6 +619,84 @@ body {
   font-size: 0.95rem;
 }
 
+.login-footer {
+  text-align: center;
+  margin-top: 1rem;
+}
+
+.back-link {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.back-link:hover {
+  color: var(--accent);
+}
+
+.reg-btn-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.reg-btn-row .login-btn {
+  margin-top: 0;
+}
+
+.reg-btn-row .login-btn:last-child {
+  flex-shrink: 0;
+  width: auto;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+}
+
+.reg-request-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.reg-request-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.reg-request-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.reg-request-details {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.reg-request-team {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.reg-request-gmail {
+  color: var(--text-muted);
+}
+
+.copy-gly-btn, .copy-gmail-btn {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.copy-gmail-btn:hover {
+  color: var(--accent);
+}
+
 /* User Management Modal */
 .modal-overlay {
   position: fixed;
@@ -666,6 +768,21 @@ body {
 .user-name {
   font-size: 0.9rem;
   font-weight: 500;
+}
+
+.user-password {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-family: monospace;
+  background: var(--bg-elevated);
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .create-user-form {
@@ -791,6 +908,23 @@ body {
   color: var(--text-muted);
 }
 
+.my-submission-item.is-duplicate {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.my-submission-dup-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 99px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* Staging List */
 .staging-list {
   display: flex;
@@ -852,6 +986,12 @@ body {
   justify-content: space-between;
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
+}
+
+.admin-user-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .admin-user-name {
@@ -917,6 +1057,12 @@ body {
 .verdict-unknown {
   background: rgba(148, 163, 184, 0.15);
   color: #94a3b8;
+}
+
+.verdict-duplicate {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
 .admin-file-source {

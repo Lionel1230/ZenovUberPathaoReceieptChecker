@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import logging.handlers
@@ -44,6 +45,7 @@ UPLOAD_ROOT = BASE_DIR / "uploads"
 USERS_FILE = BASE_DIR / "users.txt"
 CLEANUP_TOGGLE_FILE = BASE_DIR / "cleanup_enabled.txt"
 SITE_CONFIG_FILE = BASE_DIR / "site_config.json"
+REG_REQUESTS_FILE = BASE_DIR / "registration_requests.json"
 ADMIN_ROLES = {"root", "admin", "IT"}
 
 UPLOAD_ROOT.mkdir(exist_ok=True)
@@ -103,6 +105,14 @@ def login_required(f):
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
+
+
+def _file_sha1(path: Path) -> str:
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _result_to_dict(result) -> dict:
@@ -200,6 +210,15 @@ def list_users():
     return jsonify({"users": [{"username": u} for u in users]})
 
 
+@app.route("/api/users/with-passwords", methods=["GET"])
+@login_required
+def list_users_with_passwords():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+    users = _load_users()
+    return jsonify({"users": [{"username": u, "password": p} for u, p in users.items()]})
+
+
 @app.route("/api/users", methods=["POST"])
 @login_required
 def create_user():
@@ -269,6 +288,81 @@ def change_password():
     USERS_FILE.write_text("\n".join(new_lines) + "\n")
     logger.info("Password changed for user '%s'", username)
     return jsonify({"message": "Password updated"})
+
+
+def _load_reg_requests() -> list[dict]:
+    if REG_REQUESTS_FILE.exists():
+        try:
+            return json.loads(REG_REQUESTS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def _save_reg_requests(reqs: list[dict]) -> None:
+    REG_REQUESTS_FILE.write_text(json.dumps(reqs, indent=2), encoding="utf-8")
+
+
+@app.route("/register-request")
+def register_request_page():
+    return render_template("register_request.html")
+
+
+@app.route("/api/register-request", methods=["POST"])
+def submit_register_request():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    team = (data.get("team") or "").strip()
+    gmail = (data.get("gmail") or "").strip().lower()
+    force = data.get("force", False)
+
+    if not name or not team or not gmail:
+        return jsonify({"error": "All fields are required"}), 400
+
+    if "@" not in gmail or not gmail.endswith("@gmail.com"):
+        return jsonify({"error": "Please enter a valid Gmail address"}), 400
+
+    requests_list = _load_reg_requests()
+
+    if not force:
+        for r in requests_list:
+            if r["gmail"] == gmail:
+                return jsonify({"error": "You have already asked for invitation", "duplicate": True}), 409
+
+    entry = {
+        "name": name,
+        "team": team,
+        "gmail": gmail,
+        "status": "pending",
+    }
+    requests_list.append(entry)
+    _save_reg_requests(requests_list)
+    logger.info("Registration request from '%s' (%s)", name, gmail)
+    return jsonify({"message": "Your invitation request has been submitted"})
+
+
+@app.route("/api/admin/registration-requests", methods=["GET"])
+@login_required
+def list_reg_requests():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+    return jsonify({"requests": _load_reg_requests()})
+
+
+@app.route("/api/admin/registration-requests", methods=["DELETE"])
+@login_required
+def delete_reg_request():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    gmail = (data.get("gmail") or "").strip().lower()
+    if not gmail:
+        return jsonify({"error": "Gmail is required"}), 400
+    reqs = _load_reg_requests()
+    new_reqs = [r for r in reqs if r["gmail"] != gmail]
+    _save_reg_requests(new_reqs)
+    logger.info("Registration request deleted for '%s' by '%s'", gmail, session.get("username"))
+    return jsonify({"message": "Request removed"})
 
 
 @app.route("/")
@@ -423,7 +517,10 @@ def submit_files():
         return jsonify({"error": f"Files too large (max {MAX_FILE_SIZE // (1024*1024)} MB): {names}"}), 400
 
     user_dir = UPLOAD_ROOT / "submissions" / username
-    user_dir.mkdir(parents=True, exist_ok=True)
+    real_dir = user_dir / "Real"
+    fake_dir = user_dir / "Fake"
+    real_dir.mkdir(parents=True, exist_ok=True)
+    fake_dir.mkdir(parents=True, exist_ok=True)
 
     saved = []
     for idx, file in enumerate(valid_pdfs):
@@ -446,17 +543,68 @@ def submit_files():
         except Exception:
             existing_results = {}
 
+    new_sha1s = {}
     for safe_name, dest in saved:
+        sha1 = _file_sha1(dest)
+        new_sha1s[safe_name] = sha1
         try:
             r = analyze_pdfs([(dest, safe_name)])
             if r:
-                existing_results[safe_name] = _result_to_dict(r[0])
+                d = _result_to_dict(r[0])
+                d["sha1"] = sha1
+                existing_results[safe_name] = d
+            else:
+                existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "", "sha1": sha1}
         except Exception:
-            existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "Analysis failed"}
+            existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "Analysis failed", "sha1": sha1}
+
+        verdict = existing_results[safe_name].get("verdict", "unknown")
+        target_dir = real_dir if verdict == "real" else fake_dir
+        final_dest = target_dir / dest.name
+        counter = 1
+        while final_dest.exists():
+            stem = dest.stem
+            final_dest = target_dir / f"{stem}_{counter}.pdf"
+            counter += 1
+        dest.rename(final_dest)
 
     results_path.write_text(json.dumps(existing_results, indent=2), encoding="utf-8")
+
+    sha1_counts = {}
+    for info in existing_results.values():
+        s = info.get("sha1", "")
+        if s:
+            sha1_counts[s] = sha1_counts.get(s, 0) + 1
+    duplicate_files = [name for name, sha1 in new_sha1s.items() if sha1_counts.get(sha1, 0) > 1]
+
     logger.info("User '%s' submitted %d files", username, len(saved))
-    return jsonify({"message": f"{len(saved)} file(s) submitted successfully", "files": [s for s, _ in saved]})
+    return jsonify({"message": f"{len(saved)} file(s) submitted successfully", "files": [s for s, _ in saved], "duplicate_files": duplicate_files})
+
+
+@app.route("/api/check-duplicates", methods=["POST"])
+@login_required
+def check_duplicates():
+    username = session.get("username", "")
+    if username in ADMIN_ROLES:
+        return jsonify({"duplicates": []})
+
+    data = request.get_json(silent=True) or {}
+    hashes = data.get("hashes", [])
+
+    user_dir = UPLOAD_ROOT / "submissions" / username
+    results_path = user_dir / "_results.json"
+    if not results_path.exists():
+        return jsonify({"duplicates": []})
+
+    try:
+        results = json.loads(results_path.read_text(encoding="utf-8"))
+    except Exception:
+        return jsonify({"duplicates": []})
+
+    existing_sha1s = {info.get("sha1", "") for info in results.values() if info.get("sha1")}
+    duplicates = [h for h in hashes if h in existing_sha1s]
+    logger.info("check_duplicates user=%s incoming=%d existing=%d dupes=%d", username, len(hashes), len(existing_sha1s), len(duplicates))
+    return jsonify({"duplicates": duplicates})
 
 
 @app.route("/api/my-submissions", methods=["GET"])
@@ -470,19 +618,41 @@ def my_submissions():
     if not user_dir.exists():
         return jsonify({"files": []})
 
+    results_path = user_dir / "_results.json"
+    user_results = {}
+    if results_path.exists():
+        try:
+            user_results = json.loads(results_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    sha1_counts: dict[str, int] = {}
+    for info in user_results.values():
+        s = info.get("sha1", "")
+        if s:
+            sha1_counts[s] = sha1_counts.get(s, 0) + 1
+
     now = time.time()
     files = []
-    for f in sorted(user_dir.iterdir()):
-        if f.is_file() and f.suffix.lower() == ".pdf":
-            mtime = f.stat().st_mtime
-            age = now - mtime
-            files.append({
-                "name": f.name,
-                "size": f.stat().st_size,
-                "uploaded": mtime,
-                "can_delete": age < DELETE_TIME_LIMIT,
-                "remaining": max(0, int(DELETE_TIME_LIMIT - age)),
-            })
+    for verdict_folder in ("Real", "Fake"):
+        folder = user_dir / verdict_folder
+        if not folder.exists():
+            continue
+        for f in sorted(folder.iterdir()):
+            if f.is_file() and f.suffix.lower() == ".pdf":
+                mtime = f.stat().st_mtime
+                age = now - mtime
+                info = user_results.get(f.name, {})
+                sha1 = info.get("sha1", "")
+                files.append({
+                    "name": f.name,
+                    "size": f.stat().st_size,
+                    "uploaded": mtime,
+                    "can_delete": age < DELETE_TIME_LIMIT,
+                    "remaining": max(0, int(DELETE_TIME_LIMIT - age)),
+                    "folder": verdict_folder,
+                    "duplicate": sha1 != "" and sha1_counts.get(sha1, 0) > 1,
+                })
 
     return jsonify({"files": files})
 
@@ -495,8 +665,14 @@ def delete_my_submission(filename: str):
         return jsonify({"error": "Admins cannot delete this way"}), 403
 
     safe = secure_filename(filename)
-    file_path = UPLOAD_ROOT / "submissions" / username / safe
-    if not file_path.exists():
+    user_dir = UPLOAD_ROOT / "submissions" / username
+    file_path = None
+    for folder in ("Real", "Fake"):
+        candidate = user_dir / folder / safe
+        if candidate.exists():
+            file_path = candidate
+            break
+    if file_path is None:
         return jsonify({"error": "File not found"}), 404
 
     age = time.time() - file_path.stat().st_mtime
@@ -522,28 +698,50 @@ def admin_uploads():
     if submissions_dir.exists():
         for user_dir in submissions_dir.iterdir():
             if user_dir.is_dir() and user_dir.name in normal_users:
-                files = [f.name for f in sorted(user_dir.iterdir()) if f.is_file() and f.suffix.lower() == ".pdf"]
+                files = []
+                for verdict_folder in ("Real", "Fake"):
+                    folder = user_dir / verdict_folder
+                    if folder.exists():
+                        for f in sorted(folder.iterdir()):
+                            if f.is_file() and f.suffix.lower() == ".pdf":
+                                files.append((verdict_folder, f.name))
                 uploaded[user_dir.name] = files
 
     result = []
+
+    sha1_to_files: dict[str, list[str]] = {}
+    all_user_results: dict[str, dict] = {}
     for username in sorted(normal_users):
-        files = uploaded.get(username, [])
-        results = {}
         user_dir = submissions_dir / username
         results_path = user_dir / "_results.json"
+        results = {}
         if results_path.exists():
             try:
                 results = json.loads(results_path.read_text(encoding="utf-8"))
             except Exception:
                 pass
+        all_user_results[username] = results
+        for fname, info in results.items():
+            sha1 = info.get("sha1", "")
+            if sha1:
+                key = f"{username}/{fname}"
+                sha1_to_files.setdefault(sha1, []).append(key)
+
+    for username in sorted(normal_users):
+        files = uploaded.get(username, [])
+        results = all_user_results.get(username, {})
         file_data = []
-        for fname in files:
+        for folder, fname in files:
             info = results.get(fname, {})
+            sha1 = info.get("sha1", "")
+            is_duplicate = len(sha1_to_files.get(sha1, [])) > 1 if sha1 else False
             file_data.append({
                 "name": fname,
                 "verdict": info.get("verdict", ""),
                 "producer": info.get("producer", ""),
                 "creator": info.get("creator", ""),
+                "folder": folder,
+                "duplicate": is_duplicate,
             })
         result.append({"username": username, "files": file_data, "count": len(files)})
 
@@ -557,13 +755,35 @@ def admin_delete_upload(username: str, filename: str):
         return jsonify({"error": "Forbidden"}), 403
 
     safe = secure_filename(filename)
-    file_path = UPLOAD_ROOT / "submissions" / username / safe
-    if not file_path.exists():
+    user_dir = UPLOAD_ROOT / "submissions" / username
+    file_path = None
+    for folder in ("Real", "Fake"):
+        candidate = user_dir / folder / safe
+        if candidate.exists():
+            file_path = candidate
+            break
+    if file_path is None:
         return jsonify({"error": "File not found"}), 404
 
     file_path.unlink()
     logger.info("Admin deleted '%s/%s'", username, safe)
     return jsonify({"message": f"Deleted {safe}"})
+
+
+@app.route("/api/admin/open-folder/<username>", methods=["GET"])
+@login_required
+def open_folder(username: str):
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+
+    user_dir = UPLOAD_ROOT / "submissions" / username
+    if not user_dir.exists():
+        return jsonify({"error": "Folder not found"}), 404
+
+    import subprocess
+    subprocess.Popen(["explorer", str(user_dir)])
+    logger.info("Admin '%s' opened folder for '%s'", session.get("username"), username)
+    return jsonify({"ok": True, "path": str(user_dir)})
 
 
 def _load_site_config() -> dict:
@@ -640,11 +860,15 @@ def run_cleanup():
     if submissions_dir.exists():
         for user_dir in submissions_dir.iterdir():
             if user_dir.is_dir():
-                for f in user_dir.iterdir():
-                    if f.is_file() and f.suffix.lower() == ".pdf" and f.stat().st_mtime < cutoff_ts:
-                        f.unlink()
-                        deleted += 1
-                        logger.info("Cleanup: deleted '%s/%s'", user_dir.name, f.name)
+                for verdict_folder in ("Real", "Fake"):
+                    folder = user_dir / verdict_folder
+                    if not folder.exists():
+                        continue
+                    for f in folder.iterdir():
+                        if f.is_file() and f.suffix.lower() == ".pdf" and f.stat().st_mtime < cutoff_ts:
+                            f.unlink()
+                            deleted += 1
+                            logger.info("Cleanup: deleted '%s/%s/%s'", user_dir.name, verdict_folder, f.name)
 
     admin_dir = UPLOAD_ROOT
     for f in admin_dir.iterdir():
