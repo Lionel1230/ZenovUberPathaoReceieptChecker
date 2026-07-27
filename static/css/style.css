@@ -90,6 +90,24 @@ body {
   margin-bottom: 0;
 }
 
+.header-warning {
+  color: var(--unknown);
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+
+.tip-banner {
+  text-align: center;
+  padding: 0.7rem 1rem;
+  margin-bottom: 1.25rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  color: var(--accent-hover);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
 .btn-sm {
   padding: 0.35rem 0.85rem;
   font-size: 0.8rem;

@@ -33,7 +33,13 @@
 
   function updateAdminUI() {
     const btn = document.getElementById("manageUsersBtn");
+    const title = document.getElementById("headerTitle");
+    const subtitle = document.getElementById("headerSubtitle");
+    const warning = document.getElementById("headerWarning");
     if (btn) btn.classList.toggle("hidden", !isAdmin);
+    if (title) title.textContent = isAdmin ? "Zenov Conveyance Management" : "Zenov Conveyance Management";
+    if (subtitle) subtitle.classList.toggle("hidden", !isAdmin);
+    if (warning) warning.classList.toggle("hidden", isAdmin);
   }
 
   function showError(msg) {
@@ -223,7 +229,7 @@
       const labels = { real: "Real PDF", fake: "Fake PDF", unknown: "Unknown", error: "Error" };
       return labels[v] || v;
     }
-    const labels = { real: "Good to send", fake: "Don't send", unknown: "Check manually", error: "Error" };
+    const labels = { real: "Good to upload", fake: "Contact IT", unknown: "Check manually", error: "Error" };
     return labels[v] || v;
   }
 

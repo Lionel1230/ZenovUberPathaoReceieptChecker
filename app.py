@@ -33,7 +33,7 @@ ADMIN_ROLES = {"root", "admin", "IT"}
 
 UPLOAD_ROOT.mkdir(exist_ok=True)
 
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB per file
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB per file
 MAX_FILES = 200
 
 app = Flask(__name__)
@@ -377,7 +377,7 @@ if __name__ == "__main__":
         return ips
 
     port = 5000
-    print("\n  PDF Analyzer is running")
+    print("\n  Zenov Conveyance Management is running")
     print(f"  On this PC:  http://127.0.0.1:{port}")
     for ip in local_ips():
         print(f"  On your WiFi: http://{ip}:{port}")

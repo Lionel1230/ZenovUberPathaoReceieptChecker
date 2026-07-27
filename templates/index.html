@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PDF Analyzer</title>
+  <title>Zenov Conveyance Management</title>
   <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='pdf.ico') }}" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,15 +14,12 @@
   <div class="app">
     <header class="header">
       <div class="logo">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-          <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-          <path d="M9 13h6M9 17h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-        <h1>PDF Analyzer</h1>
+        <img src="{{ url_for('static', filename='Zenov_Logo_BG.png') }}" alt="Zenov" width="50" height="50" />
+        <h1 id="headerTitle">Zenov Conveyance Management</h1>
       </div>
       <div class="header-row">
-        <p class="subtitle">Detect real vs modified PDFs by inspecting metadata</p>
+        <p class="subtitle" id="headerSubtitle">Detect real vs modified PDFs by inspecting metadata</p>
+        <p class="subtitle header-warning hidden" id="headerWarning">Do not upload modified PDF files. You must take all responsibility of your uploaded files.</p>
         <button class="btn btn-secondary btn-sm hidden" id="manageUsersBtn">Manage Users</button>
         <a href="{{ url_for('logout') }}" class="btn btn-secondary btn-sm">Logout</a>
       </div>
@@ -98,11 +95,6 @@
 
     <footer class="footer">
       <p class="credit">Designed by <strong>Julker Naine Jakaria</strong></p>
-      <p>
-        <strong>Real PDF</strong> — metadata contains <code>skia</code>, no <code>adobe</code> / <code>canva</code>
-        &nbsp;·&nbsp;
-        <strong>Fake PDF</strong> — metadata contains <code>adobe</code>, <code>canva</code>, or <code>pdfleader</code>
-      </p>
     </footer>
   </div>
 

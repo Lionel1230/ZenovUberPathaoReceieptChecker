@@ -1,7 +1,7 @@
 [project]
-name = "pdf-analyzer"
+name = "zenov-conveyance-management"
 version = "0.1.0"
-description = "Flask web app to detect real vs modified PDFs via metadata analysis"
+description = "Zenov Conveyance Management — PDF metadata analysis"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
