@@ -78,40 +78,6 @@ def _extract_xmp_fallback(pdf_path: Path) -> str:
     return ""
 
 
-def _collect_metadata_text(pdf_path: Path) -> str:
-    """Gather all searchable text from PDF metadata, XMP, and info dict."""
-    parts: list[str] = []
-
-    try:
-        reader = PdfReader(str(pdf_path), strict=False)
-
-        meta = reader.metadata
-        if meta:
-            for key in meta:
-                val = meta.get(key)  # type: ignore[call-overload]
-                if val:
-                    parts.append(str(val))
-
-        xmp_text = _extract_xmp_text(reader)
-        if xmp_text:
-            parts.append(xmp_text)
-    except PdfReadError:
-        pass
-
-    if not any("xmp" in p.lower() or "adobe" in p.lower() for p in parts):
-        fallback = _extract_xmp_fallback(pdf_path)
-        if fallback:
-            parts.append(fallback)
-
-    try:
-        raw = pdf_path.read_bytes()[:16384].decode("latin-1", errors="ignore")
-        parts.append(raw)
-    except OSError:
-        pass
-
-    return " ".join(parts).lower()
-
-
 def classify_pdf(text: str) -> tuple[PdfVerdict, list[str]]:
     """Classify PDF based on metadata keywords."""
     matched: list[str] = []

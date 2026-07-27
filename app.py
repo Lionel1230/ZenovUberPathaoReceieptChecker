@@ -133,6 +133,18 @@ def upload_files():
         return jsonify({"error": "No valid PDF files found (bad file content)"}), 400
     pdf_files = valid_pdfs
 
+    oversized = []
+    for f in pdf_files:
+        f.stream.seek(0, 2)
+        size = f.stream.tell()
+        f.stream.seek(0)
+        if size > MAX_FILE_SIZE:
+            oversized.append(f.filename)
+    if oversized:
+        names = ", ".join(oversized[:5])
+        suffix = f" and {len(oversized) - 5} more" if len(oversized) > 5 else ""
+        return jsonify({"error": f"Files too large (max {MAX_FILE_SIZE // (1024*1024)} MB): {names}{suffix}"}), 400
+
     if len(pdf_files) > MAX_FILES:
         return jsonify({"error": f"Too many files (max {MAX_FILES})"}), 400
 

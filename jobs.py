@@ -53,7 +53,21 @@ class JobStore:
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            return Job(
+                id=job.id,
+                status=job.status,
+                upload_progress=job.upload_progress,
+                analyze_progress=job.analyze_progress,
+                total_files=job.total_files,
+                analyzed_count=job.analyzed_count,
+                results=list(job.results),
+                error=job.error,
+                upload_dir=job.upload_dir,
+                created_at=job.created_at,
+            )
 
     def update(self, job_id: str, **kwargs: Any) -> None:
         with self._lock:
@@ -71,7 +85,7 @@ class JobStore:
                 "analyze_progress": job.analyze_progress,
                 "total_files": job.total_files,
                 "analyzed_count": job.analyzed_count,
-                "results": job.results,
+                "results": list(job.results),
                 "error": job.error,
             }
 
