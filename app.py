@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import shutil
 import threading
+from functools import wraps
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.utils import secure_filename
 
 from analyzer import analyze_pdfs
@@ -29,6 +31,32 @@ MAX_FILES = 200
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE * MAX_FILES
+app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+
+USERS_FILE = BASE_DIR / "users.txt"
+ADMIN_ROLES = {"root", "admin", "IT"}
+
+
+def _load_users() -> dict[str, str]:
+    users: dict[str, str] = {}
+    if USERS_FILE.exists():
+        for line in USERS_FILE.read_text().splitlines():
+            line = line.strip()
+            if ":" in line and not line.startswith("#"):
+                username, password = line.split(":", 1)
+                users[username.strip()] = password.strip()
+    return users
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("authenticated"):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Authentication required"}), 401
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
 
 
 def _result_to_dict(result) -> dict:
@@ -84,12 +112,127 @@ def _run_analysis(job_id: str, pdf_items: list[tuple[Path, str]]) -> None:
                 logger.warning("Could not clean up upload dir for job %s", job_id)
 
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        users = _load_users()
+        if users.get(username) == password:
+            session["authenticated"] = True
+            session["username"] = username
+            return redirect(url_for("index"))
+        return render_template("login.html", error="Invalid username or password")
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/api/me")
+@login_required
+def get_me():
+    username = session.get("username", "")
+    return jsonify({"username": username, "is_admin": username in ADMIN_ROLES})
+
+
+def _save_user(username: str, password: str) -> None:
+    line = f"{username}:{password}\n"
+    with open(USERS_FILE, "a", encoding="utf-8") as f:
+        f.write(line)
+
+
+@app.route("/api/users", methods=["GET"])
+@login_required
+def list_users():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+    users = _load_users()
+    return jsonify({"users": [{"username": u} for u in users]})
+
+
+@app.route("/api/users", methods=["POST"])
+@login_required
+def create_user():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+    if ":" in username:
+        return jsonify({"error": "Username cannot contain ':'"}), 400
+
+    users = _load_users()
+    if username in users:
+        return jsonify({"error": f"User '{username}' already exists"}), 409
+
+    _save_user(username, password)
+    logger.info("User '%s' created by '%s'", username, session.get("username"))
+    return jsonify({"message": f"User '{username}' created"}), 201
+
+
+@app.route("/api/users/<username>", methods=["DELETE"])
+@login_required
+def delete_user(username: str):
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+    if username == "root":
+        return jsonify({"error": "Cannot delete root user"}), 403
+
+    users = _load_users()
+    if username not in users:
+        return jsonify({"error": "User not found"}), 404
+
+    lines = USERS_FILE.read_text().splitlines()
+    new_lines = [l for l in lines if not (l.strip() and not l.strip().startswith("#") and l.strip().split(":")[0].strip() == username)]
+    USERS_FILE.write_text("\n".join(new_lines) + "\n")
+    logger.info("User '%s' deleted by '%s'", username, session.get("username"))
+    return jsonify({"message": f"User '{username}' deleted"})
+
+
+@app.route("/api/password", methods=["POST"])
+@login_required
+def change_password():
+    data = request.get_json(silent=True) or {}
+    old_password = (data.get("old_password") or "").strip()
+    new_password = (data.get("new_password") or "").strip()
+
+    if not old_password or not new_password:
+        return jsonify({"error": "Both old and new password are required"}), 400
+
+    username = session.get("username", "")
+    users = _load_users()
+    if users.get(username) != old_password:
+        return jsonify({"error": "Current password is incorrect"}), 403
+
+    lines = USERS_FILE.read_text().splitlines()
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and stripped.split(":")[0].strip() == username:
+            new_lines.append(f"{username}:{new_password}")
+        else:
+            new_lines.append(line)
+    USERS_FILE.write_text("\n".join(new_lines) + "\n")
+    logger.info("Password changed for user '%s'", username)
+    return jsonify({"message": "Password updated"})
+
+
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html")
 
 
 @app.route("/api/jobs/<job_id>", methods=["GET"])
+@login_required
 def get_job_status(job_id: str):
     job = job_store.get(job_id)
     if not job:
@@ -114,6 +257,7 @@ def _safe_storage_name(original: str, idx: int) -> str:
 
 
 @app.route("/api/upload", methods=["POST"])
+@login_required
 def upload_files():
     files = request.files.getlist("files")
     if not files or all(f.filename == "" for f in files):

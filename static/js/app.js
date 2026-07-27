@@ -17,6 +17,24 @@
 
   let pollTimer = null;
   let busy = false;
+  let currentUser = window.__CURRENT_USER || "";
+  let isAdmin = ["root", "admin", "IT"].includes(currentUser);
+
+  if (!currentUser) {
+    fetch("/api/me")
+      .then((r) => r.json())
+      .then((data) => {
+        currentUser = data.username;
+        isAdmin = data.is_admin;
+        updateAdminUI();
+      })
+      .catch(() => {});
+  }
+
+  function updateAdminUI() {
+    const btn = document.getElementById("manageUsersBtn");
+    if (btn) btn.classList.toggle("hidden", !isAdmin);
+  }
 
   function showError(msg) {
     errorAlert.textContent = msg;
@@ -79,6 +97,10 @@
     });
 
     xhr.addEventListener("load", () => {
+      if (xhr.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
       if (xhr.status >= 200 && xhr.status < 300) {
         const data = JSON.parse(xhr.responseText);
         setProgress(uploadBar, uploadPct, 100);
@@ -114,6 +136,12 @@
     pollTimer = setInterval(async () => {
       try {
         const res = await fetch(`/api/jobs/${jobId}`);
+        if (res.status === 401) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          window.location.href = "/login";
+          return;
+        }
         if (!res.ok) throw new Error("Job not found");
 
         const job = await res.json();
@@ -162,7 +190,7 @@
       .filter(([, c]) => c > 0)
       .map(
         ([v, c]) =>
-          `<span class="summary-badge ${v}">${c} ${v}</span>`
+          `<span class="summary-badge ${v}">${c} ${verdictLabel(v)}</span>`
       )
       .join("");
 
@@ -191,16 +219,16 @@
   }
 
   function verdictLabel(v) {
-    const labels = {
-      real: "Real PDF",
-      fake: "Fake PDF",
-      unknown: "Unknown",
-      error: "Error",
-    };
+    if (isAdmin) {
+      const labels = { real: "Real PDF", fake: "Fake PDF", unknown: "Unknown", error: "Error" };
+      return labels[v] || v;
+    }
+    const labels = { real: "Good to send", fake: "Don't send", unknown: "Check manually", error: "Error" };
     return labels[v] || v;
   }
 
   function buildMeta(r) {
+    if (!isAdmin) return "";
     const parts = [];
     if (r.producer) parts.push(`Producer: ${escapeHtml(r.producer)}`);
     if (r.creator) parts.push(`Creator: ${escapeHtml(r.creator)}`);
@@ -214,6 +242,93 @@
     const div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  /* User Management Modal */
+  function generatePassword(len) {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%&*";
+    let pw = "";
+    const arr = new Uint32Array(len);
+    crypto.getRandomValues(arr);
+    for (let i = 0; i < len; i++) pw += chars[arr[i] % chars.length];
+    return pw;
+  }
+
+  function openUserModal() {
+    document.getElementById("userModalOverlay").classList.remove("hidden");
+    loadUserList();
+    document.getElementById("newUsername").value = "";
+    document.getElementById("newPassword").value = "";
+    document.getElementById("userModalError").classList.add("hidden");
+  }
+
+  function closeUserModal() {
+    document.getElementById("userModalOverlay").classList.add("hidden");
+  }
+
+  async function loadUserList() {
+    const list = document.getElementById("userList");
+    try {
+      const res = await fetch("/api/users");
+      if (!res.ok) return;
+      const data = await res.json();
+      list.innerHTML = data.users
+        .map(
+          (u) => `
+          <div class="user-row">
+            <span class="user-name">${escapeHtml(u.username)}</span>
+            ${u.username !== "root" && u.username !== currentUser ? `<button class="btn-icon btn-danger-icon" data-delete="${escapeHtml(u.username)}" title="Delete user">✕</button>` : ""}
+          </div>`
+        )
+        .join("");
+
+      list.querySelectorAll("[data-delete]").forEach((btn) => {
+        btn.addEventListener("click", () => deleteUser(btn.dataset.delete));
+      });
+    } catch (_) {
+      list.innerHTML = '<p class="text-muted">Failed to load users</p>';
+    }
+  }
+
+  async function createUser() {
+    const username = document.getElementById("newUsername").value.trim();
+    const password = document.getElementById("newPassword").value.trim();
+    const errEl = document.getElementById("userModalError");
+    errEl.classList.add("hidden");
+
+    if (!username || !password) {
+      errEl.textContent = "Username and password are required";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error;
+        errEl.classList.remove("hidden");
+        return;
+      }
+      document.getElementById("newUsername").value = "";
+      document.getElementById("newPassword").value = "";
+      loadUserList();
+    } catch (_) {
+      errEl.textContent = "Failed to create user";
+      errEl.classList.remove("hidden");
+    }
+  }
+
+  async function deleteUser(username) {
+    if (!confirm(`Delete user "${username}"?`)) return;
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(username)}`, { method: "DELETE" });
+      if (res.ok) loadUserList();
+    } catch (_) {}
   }
 
   /* Event listeners */
@@ -241,4 +356,16 @@
     dropZone.classList.remove("drag-over");
     if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
   });
+
+  document.getElementById("manageUsersBtn").addEventListener("click", openUserModal);
+  document.getElementById("closeUserModal").addEventListener("click", closeUserModal);
+  document.getElementById("userModalOverlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeUserModal();
+  });
+  document.getElementById("createUserBtn").addEventListener("click", createUser);
+  document.getElementById("generatePwBtn").addEventListener("click", () => {
+    document.getElementById("newPassword").value = generatePassword(16);
+  });
+
+  updateAdminUI();
 })();

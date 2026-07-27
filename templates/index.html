@@ -21,7 +21,11 @@
         </svg>
         <h1>PDF Analyzer</h1>
       </div>
-      <p class="subtitle">Detect real vs modified PDFs by inspecting metadata</p>
+      <div class="header-row">
+        <p class="subtitle">Detect real vs modified PDFs by inspecting metadata</p>
+        <button class="btn btn-secondary btn-sm hidden" id="manageUsersBtn">Manage Users</button>
+        <a href="{{ url_for('logout') }}" class="btn btn-secondary btn-sm">Logout</a>
+      </div>
     </header>
 
     <main class="main">
@@ -102,6 +106,33 @@
     </footer>
   </div>
 
+  <div class="modal-overlay hidden" id="userModalOverlay">
+    <div class="modal card" id="userModal">
+      <div class="modal-header">
+        <h2 class="section-title">Manage Users</h2>
+        <button class="btn-icon" id="closeUserModal" title="Close">✕</button>
+      </div>
+
+      <div class="user-list" id="userList"></div>
+
+      <div class="modal-divider"></div>
+
+      <h3 class="section-title">Add New User</h3>
+      <div class="alert hidden" id="userModalError"></div>
+      <div class="create-user-form">
+        <input type="text" id="newUsername" placeholder="Username" autocomplete="off" />
+        <div class="password-row">
+          <input type="text" id="newPassword" placeholder="Password" autocomplete="off" />
+          <button class="btn btn-secondary btn-sm" id="generatePwBtn" title="Auto-generate password">Generate</button>
+        </div>
+        <button class="btn btn-primary" id="createUserBtn">Create User</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.__CURRENT_USER = "{{ session.get('username', '') }}";
+  </script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
