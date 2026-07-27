@@ -5,28 +5,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Zenov Conveyance Management</title>
   <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='pdf.ico') }}" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
 <body>
   <div class="app">
     <header class="header">
       <div class="logo">
-        <img src="{{ url_for('static', filename='Zenov_Logo_BG.png') }}" alt="Zenov" width="50" height="50" />
+        <img src="{{ url_for('static', filename='Zenov_Logo_BG.png') }}" alt="Zenov" width="220" height="220" />
         <h1 id="headerTitle">Zenov Conveyance Management</h1>
+        <span class="beta-tag">BETA</span>
       </div>
       <div class="header-row">
         <p class="subtitle" id="headerSubtitle">Detect real vs modified PDFs by inspecting metadata</p>
         <p class="subtitle header-warning hidden" id="headerWarning">Do not upload modified PDF files. You must take all responsibility of your uploaded files.</p>
         <button class="btn btn-secondary btn-sm hidden" id="manageUsersBtn">Manage Users</button>
-        <a href="{{ url_for('logout') }}" class="btn btn-secondary btn-sm">Logout</a>
+        <button class="btn btn-secondary btn-sm hidden" id="uploadsBtn">Uploads</button>
+        <button class="btn btn-secondary btn-sm hidden" id="siteSettingsBtn">Site Settings</button>
+        <a href="{{ url_for('logout') }}" class="btn btn-danger btn-sm">Logout</a>
       </div>
     </header>
 
+    <div class="maintenance-banner hidden" id="maintenanceBanner">
+      <span id="maintenanceText"></span>
+    </div>
+
     <main class="main">
-      <section class="upload-section card">
+      <section class="upload-section card" id="uploadSection">
         <div class="drop-zone" id="dropZone">
           <div class="drop-zone-content">
             <svg class="drop-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -55,6 +59,23 @@
           </label>
           <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
         </div>
+      </section>
+
+      <section class="staging-section card hidden" id="stagingSection">
+        <h2 class="section-title">Selected Files</h2>
+        <div class="staging-list" id="stagingList"></div>
+        <div class="staging-actions">
+          <button class="btn btn-secondary btn-sm" id="clearStagingBtn">Clear All</button>
+          <button class="btn btn-primary" id="submitFilesBtn">Submit</button>
+        </div>
+      </section>
+
+      <section class="my-submissions card hidden" id="mySubmissions">
+        <div class="my-submissions-header">
+          <h2 class="section-title">My Submissions</h2>
+          <button class="btn btn-primary btn-sm" id="refreshMySubmissionsBtn">Refresh</button>
+        </div>
+        <div id="mySubmissionsList"></div>
       </section>
 
       <section class="progress-section card hidden" id="progressSection">
@@ -94,7 +115,8 @@
     </main>
 
     <footer class="footer">
-      <p class="credit">Designed by <strong>Julker Naine Jakaria</strong></p>
+      <p class="daily-quote" id="dailyQuote"></p>
+      <p class="credit">Designed by <strong class="credit-name">Julker Naine Jakaria</strong></p>
     </footer>
   </div>
 
@@ -119,6 +141,52 @@
         </div>
         <button class="btn btn-primary" id="createUserBtn">Create User</button>
       </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="uploadsModalOverlay">
+    <div class="modal card uploads-modal" id="uploadsModal">
+      <div class="modal-header">
+        <h2 class="section-title">User Submissions</h2>
+        <button class="btn-icon" id="closeUploadsModal" title="Close">✕</button>
+      </div>
+      <div class="cleanup-bar">
+        <div class="cleanup-toggle-row">
+          <span class="cleanup-label">Auto-delete PDFs older than 90 days</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="cleanupToggle" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="runCleanupBtn">Run Cleanup Now</button>
+      </div>
+      <div id="uploadsModalList"></div>
+      <div class="modal-divider" id="logsDivider"></div>
+      <h3 class="section-title" id="logsTitle">Recent Logs</h3>
+      <div class="logs-viewer" id="logsViewer">Loading...</div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="siteSettingsOverlay">
+    <div class="modal card" id="siteSettingsModal">
+      <div class="modal-header">
+        <h2 class="section-title">Site Settings</h2>
+        <button class="btn-icon" id="closeSiteSettings" title="Close">✕</button>
+      </div>
+
+      <div class="settings-group">
+        <label class="settings-label" for="dailyQuoteInput">Daily Quote</label>
+        <textarea class="settings-input" id="dailyQuoteInput" rows="3" placeholder="Enter a daily quote..."></textarea>
+      </div>
+
+      <div class="settings-group">
+        <label class="settings-label" for="maintenanceInput">Maintenance Message</label>
+        <textarea class="settings-input" id="maintenanceInput" rows="2" placeholder="e.g. Website will be up in 24H"></textarea>
+        <p class="settings-hint">Leave empty to hide the maintenance banner.</p>
+      </div>
+
+      <button class="btn btn-primary" id="saveSiteSettingsBtn">Save Settings</button>
+      <div class="alert hidden" id="siteSettingsAlert"></div>
     </div>
   </div>
 

@@ -5,17 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Zenov Conveyance Management — Login</title>
   <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='pdf.ico') }}" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
 <body>
   <div class="login-page">
+    <div class="maintenance-banner hidden" id="maintenanceBanner">
+      <span id="maintenanceText"></span>
+    </div>
+
     <div class="login-card card">
       <div class="login-header">
-        <img src="{{ url_for('static', filename='Zenov_Logo_BG.png') }}" alt="Zenov" width="55" height="55" />
+        <img src="{{ url_for('static', filename='Zenov_Logo_BG.png') }}" alt="Zenov" width="220" height="220" />
         <h1>Zenov Conveyance Management</h1>
+        <span class="beta-tag">BETA</span>
         <p class="subtitle">Sign in to continue</p>
       </div>
 
@@ -35,6 +37,27 @@
         <button type="submit" class="btn btn-primary login-btn">Sign In</button>
       </form>
     </div>
+
+    <footer class="footer">
+      <p class="daily-quote hidden" id="dailyQuote"></p>
+      <p class="credit">Designed by <strong class="credit-name">Julker Naine Jakaria</strong></p>
+    </footer>
   </div>
+
+  <script>
+    fetch("/api/site-config").then(function(r){ return r.ok ? r.json() : null }).then(function(d){
+      if(!d) return;
+      if(d.daily_quote){
+        var el = document.getElementById("dailyQuote");
+        el.textContent = "\u201C" + d.daily_quote + "\u201D";
+        el.classList.remove("hidden");
+      }
+      if(d.maintenance_message){
+        var b = document.getElementById("maintenanceBanner");
+        document.getElementById("maintenanceText").textContent = d.maintenance_message;
+        b.classList.remove("hidden");
+      }
+    }).catch(function(){});
+  </script>
 </body>
 </html>

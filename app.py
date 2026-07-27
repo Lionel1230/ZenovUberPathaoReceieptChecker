@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import secrets
 import shutil
 import threading
+import time
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -18,27 +21,48 @@ from werkzeug.utils import secure_filename
 from analyzer import analyze_pdfs
 from jobs import JobStatus, job_store
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger(__name__)
-
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
+LOGS_DIR = BASE_DIR / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+
+file_handler = logging.handlers.RotatingFileHandler(
+    LOGS_DIR / "app.log", maxBytes=5 * 1024 * 1024, backupCount=10, encoding="utf-8"
+)
+file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+file_handler.setLevel(logging.DEBUG)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+console_handler.setLevel(logging.INFO)
+
+logging.basicConfig(level=logging.DEBUG, handlers=[file_handler, console_handler])
+logger = logging.getLogger(__name__)
+
 UPLOAD_ROOT = BASE_DIR / "uploads"
 USERS_FILE = BASE_DIR / "users.txt"
+CLEANUP_TOGGLE_FILE = BASE_DIR / "cleanup_enabled.txt"
+SITE_CONFIG_FILE = BASE_DIR / "site_config.json"
 ADMIN_ROLES = {"root", "admin", "IT"}
 
 UPLOAD_ROOT.mkdir(exist_ok=True)
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB per file
 MAX_FILES = 200
+DELETE_TIME_LIMIT = 7200  # 2 hours in seconds
+CLEANUP_DAYS = 90
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE * MAX_FILES
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+
+
+@app.before_request
+def log_request():
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+    username = session.get("username", "anonymous")
+    logger.info("REQUEST %s %s | user=%s ip=%s", request.method, request.path, username, ip)
 
 
 def _seed_users_file() -> None:
@@ -361,6 +385,257 @@ def upload_files():
 @app.errorhandler(413)
 def too_large(_exc):
     return jsonify({"error": "Upload too large"}), 413
+
+
+@app.route("/api/submit", methods=["POST"])
+@login_required
+def submit_files():
+    username = session.get("username", "")
+    if username in ADMIN_ROLES:
+        return jsonify({"error": "Admins cannot submit files this way"}), 403
+
+    files = request.files.getlist("files")
+    if not files or all(f.filename == "" for f in files):
+        return jsonify({"error": "No files provided"}), 400
+
+    pdf_files = [f for f in files if f.filename and f.filename.lower().endswith(".pdf")]
+    if not pdf_files:
+        return jsonify({"error": "No PDF files found"}), 400
+
+    valid_pdfs = []
+    for f in pdf_files:
+        header = f.stream.read(5)
+        f.stream.seek(0)
+        if header.startswith(b"%PDF"):
+            valid_pdfs.append(f)
+    if not valid_pdfs:
+        return jsonify({"error": "No valid PDF files found"}), 400
+
+    oversized = []
+    for f in valid_pdfs:
+        f.stream.seek(0, 2)
+        size = f.stream.tell()
+        f.stream.seek(0)
+        if size > MAX_FILE_SIZE:
+            oversized.append(f.filename)
+    if oversized:
+        names = ", ".join(oversized[:5])
+        return jsonify({"error": f"Files too large (max {MAX_FILE_SIZE // (1024*1024)} MB): {names}"}), 400
+
+    user_dir = UPLOAD_ROOT / "submissions" / username
+    user_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = []
+    for idx, file in enumerate(valid_pdfs):
+        display_name = _display_filename(file.filename, idx)
+        safe_name = _safe_storage_name(display_name, idx)
+        dest = user_dir / safe_name
+        counter = 1
+        while dest.exists():
+            stem = Path(safe_name).stem
+            dest = user_dir / f"{stem}_{counter}.pdf"
+            counter += 1
+        file.save(str(dest))
+        saved.append(safe_name)
+
+    logger.info("User '%s' submitted %d files", username, len(saved))
+    return jsonify({"message": f"{len(saved)} file(s) submitted successfully", "files": saved})
+
+
+@app.route("/api/my-submissions", methods=["GET"])
+@login_required
+def my_submissions():
+    username = session.get("username", "")
+    if username in ADMIN_ROLES:
+        return jsonify({"error": "Admins cannot view submissions this way"}), 403
+
+    user_dir = UPLOAD_ROOT / "submissions" / username
+    if not user_dir.exists():
+        return jsonify({"files": []})
+
+    now = time.time()
+    files = []
+    for f in sorted(user_dir.iterdir()):
+        if f.is_file() and f.suffix.lower() == ".pdf":
+            mtime = f.stat().st_mtime
+            age = now - mtime
+            files.append({
+                "name": f.name,
+                "size": f.stat().st_size,
+                "uploaded": mtime,
+                "can_delete": age < DELETE_TIME_LIMIT,
+                "remaining": max(0, int(DELETE_TIME_LIMIT - age)),
+            })
+
+    return jsonify({"files": files})
+
+
+@app.route("/api/my-submissions/<filename>", methods=["DELETE"])
+@login_required
+def delete_my_submission(filename: str):
+    username = session.get("username", "")
+    if username in ADMIN_ROLES:
+        return jsonify({"error": "Admins cannot delete this way"}), 403
+
+    safe = secure_filename(filename)
+    file_path = UPLOAD_ROOT / "submissions" / username / safe
+    if not file_path.exists():
+        return jsonify({"error": "File not found"}), 404
+
+    age = time.time() - file_path.stat().st_mtime
+    if age >= DELETE_TIME_LIMIT:
+        return jsonify({"error": "Cannot delete after 2 hours"}), 403
+
+    file_path.unlink()
+    logger.info("User '%s' deleted '%s'", username, safe)
+    return jsonify({"message": f"Deleted {safe}"})
+
+
+@app.route("/api/admin/uploads", methods=["GET"])
+@login_required
+def admin_uploads():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+
+    submissions_dir = UPLOAD_ROOT / "submissions"
+    users = _load_users()
+    normal_users = {u for u in users if u not in ADMIN_ROLES}
+
+    uploaded = {}
+    if submissions_dir.exists():
+        for user_dir in submissions_dir.iterdir():
+            if user_dir.is_dir() and user_dir.name in normal_users:
+                files = [f.name for f in sorted(user_dir.iterdir()) if f.is_file() and f.suffix.lower() == ".pdf"]
+                uploaded[user_dir.name] = files
+
+    result = []
+    for username in sorted(normal_users):
+        files = uploaded.get(username, [])
+        result.append({"username": username, "files": files, "count": len(files)})
+
+    return jsonify({"users": result})
+
+
+@app.route("/api/admin/uploads/<username>/<filename>", methods=["DELETE"])
+@login_required
+def admin_delete_upload(username: str, filename: str):
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+
+    safe = secure_filename(filename)
+    file_path = UPLOAD_ROOT / "submissions" / username / safe
+    if not file_path.exists():
+        return jsonify({"error": "File not found"}), 404
+
+    file_path.unlink()
+    logger.info("Admin deleted '%s/%s'", username, safe)
+    return jsonify({"message": f"Deleted {safe}"})
+
+
+def _load_site_config() -> dict:
+    if SITE_CONFIG_FILE.exists():
+        try:
+            return json.loads(SITE_CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"daily_quote": "", "maintenance_message": ""}
+
+
+def _save_site_config(cfg: dict) -> None:
+    SITE_CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+
+@app.route("/api/site-config", methods=["GET"])
+def get_site_config():
+    cfg = _load_site_config()
+    return jsonify({"daily_quote": cfg["daily_quote"], "maintenance_message": cfg["maintenance_message"]})
+
+
+@app.route("/api/admin/site-config", methods=["PUT"])
+@login_required
+def update_site_config():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    cfg = _load_site_config()
+    if "daily_quote" in data:
+        cfg["daily_quote"] = data["daily_quote"]
+    if "maintenance_message" in data:
+        cfg["maintenance_message"] = data["maintenance_message"]
+    _save_site_config(cfg)
+    logger.info("Site config updated by '%s'", session.get("username"))
+    return jsonify({"ok": True, "daily_quote": cfg["daily_quote"], "maintenance_message": cfg["maintenance_message"]})
+
+
+@app.route("/api/admin/cleanup-status", methods=["GET"])
+@login_required
+def cleanup_status():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+    enabled = CLEANUP_TOGGLE_FILE.exists() and CLEANUP_TOGGLE_FILE.read_text().strip() == "1"
+    return jsonify({"enabled": enabled, "days": CLEANUP_DAYS})
+
+
+@app.route("/api/admin/cleanup-toggle", methods=["POST"])
+@login_required
+def cleanup_toggle():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    enabled = data.get("enabled", False)
+    if enabled:
+        CLEANUP_TOGGLE_FILE.write_text("1")
+        logger.info("Auto-cleanup ENABLED by '%s'", session.get("username"))
+    else:
+        CLEANUP_TOGGLE_FILE.write_text("0")
+        logger.info("Auto-cleanup DISABLED by '%s'", session.get("username"))
+    return jsonify({"enabled": enabled})
+
+
+@app.route("/api/admin/cleanup", methods=["POST"])
+@login_required
+def run_cleanup():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+
+    cutoff = datetime.now() - timedelta(days=CLEANUP_DAYS)
+    cutoff_ts = cutoff.timestamp()
+    deleted = 0
+
+    submissions_dir = UPLOAD_ROOT / "submissions"
+    if submissions_dir.exists():
+        for user_dir in submissions_dir.iterdir():
+            if user_dir.is_dir():
+                for f in user_dir.iterdir():
+                    if f.is_file() and f.suffix.lower() == ".pdf" and f.stat().st_mtime < cutoff_ts:
+                        f.unlink()
+                        deleted += 1
+                        logger.info("Cleanup: deleted '%s/%s'", user_dir.name, f.name)
+
+    admin_dir = UPLOAD_ROOT
+    for f in admin_dir.iterdir():
+        if f.is_file() and f.suffix.lower() == ".pdf" and f.stat().st_mtime < cutoff_ts:
+            f.unlink()
+            deleted += 1
+            logger.info("Cleanup: deleted '%s'", f.name)
+
+    logger.info("Cleanup completed by '%s' — %d files deleted (older than %d days)", session.get("username"), deleted, CLEANUP_DAYS)
+    return jsonify({"deleted": deleted, "days": CLEANUP_DAYS})
+
+
+@app.route("/api/logs", methods=["GET"])
+@login_required
+def get_logs():
+    if session.get("username") != "IT":
+        return jsonify({"error": "Forbidden"}), 403
+
+    log_file = LOGS_DIR / "app.log"
+    if not log_file.exists():
+        return jsonify({"logs": ""})
+
+    lines = log_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+    tail = lines[-500:]
+    return jsonify({"logs": "\n".join(tail)})
 
 
 if __name__ == "__main__":

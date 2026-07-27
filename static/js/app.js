@@ -14,11 +14,14 @@
   const analyzeDetail = document.getElementById("analyzeDetail");
   const resultsGrid = document.getElementById("resultsGrid");
   const summaryBadges = document.getElementById("summaryBadges");
+  const stagingSection = document.getElementById("stagingSection");
+  const stagingList = document.getElementById("stagingList");
 
   let pollTimer = null;
   let busy = false;
   let currentUser = window.__CURRENT_USER || "";
   let isAdmin = ["root", "admin", "IT"].includes(currentUser);
+  let stagedFiles = [];
 
   if (!currentUser) {
     fetch("/api/me")
@@ -33,13 +36,18 @@
 
   function updateAdminUI() {
     const btn = document.getElementById("manageUsersBtn");
+    const uploadsBtn = document.getElementById("uploadsBtn");
+    const siteSettingsBtn = document.getElementById("siteSettingsBtn");
     const title = document.getElementById("headerTitle");
     const subtitle = document.getElementById("headerSubtitle");
     const warning = document.getElementById("headerWarning");
     if (btn) btn.classList.toggle("hidden", !isAdmin);
-    if (title) title.textContent = isAdmin ? "Zenov Conveyance Management" : "Zenov Conveyance Management";
+    if (uploadsBtn) uploadsBtn.classList.toggle("hidden", !isAdmin);
+    if (siteSettingsBtn) siteSettingsBtn.classList.toggle("hidden", !isAdmin);
+    if (title) title.textContent = "Zenov Conveyance Management";
     if (subtitle) subtitle.classList.toggle("hidden", !isAdmin);
     if (warning) warning.classList.toggle("hidden", isAdmin);
+    if (!isAdmin) loadMySubmissions();
   }
 
   function showError(msg) {
@@ -82,10 +90,88 @@
       return;
     }
 
-    resetUI();
-    progressSection.classList.remove("hidden");
+    if (isAdmin) {
+      resetUI();
+      progressSection.classList.remove("hidden");
+      busy = true;
+      uploadFiles(pdfs);
+    } else {
+      addFilesToStaging(pdfs);
+    }
+  }
+
+  function addFilesToStaging(files) {
+    files.forEach((f) => {
+      if (!stagedFiles.some((s) => s.name === f.name && s.size === f.size)) {
+        stagedFiles.push(f);
+      }
+    });
+    renderStaging();
+  }
+
+  function renderStaging() {
+    if (stagedFiles.length === 0) {
+      stagingSection.classList.add("hidden");
+      return;
+    }
+    stagingSection.classList.remove("hidden");
+    stagingList.innerHTML = stagedFiles
+      .map(
+        (f, i) => `
+        <div class="staging-item">
+          <span class="staging-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+          <span class="staging-size">${(f.size / (1024 * 1024)).toFixed(2)} MB</span>
+          <button class="btn-icon btn-danger-icon" data-remove="${i}" title="Remove">✕</button>
+        </div>`
+      )
+      .join("");
+    stagingList.querySelectorAll("[data-remove]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        stagedFiles.splice(parseInt(btn.dataset.remove), 1);
+        renderStaging();
+      });
+    });
+  }
+
+  async function submitStagedFiles() {
+    if (stagedFiles.length === 0 || busy) return;
     busy = true;
-    uploadFiles(pdfs);
+    hideError();
+
+    const formData = new FormData();
+    stagedFiles.forEach((f) => formData.append("files", f));
+
+    try {
+      const res = await fetch("/api/submit", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        showError(data.error || "Submit failed");
+        busy = false;
+        return;
+      }
+      stagedFiles = [];
+      renderStaging();
+      showSuccess(data.message);
+      loadMySubmissions();
+      busy = false;
+    } catch (_) {
+      showError("Network error during submit");
+      busy = false;
+    }
+  }
+
+  function showSuccess(msg) {
+    errorAlert.textContent = msg;
+    errorAlert.classList.remove("hidden");
+    errorAlert.style.background = "var(--real-bg)";
+    errorAlert.style.borderColor = "var(--real)";
+    errorAlert.style.color = "var(--real)";
+    setTimeout(() => {
+      errorAlert.classList.add("hidden");
+      errorAlert.style.background = "";
+      errorAlert.style.borderColor = "";
+      errorAlert.style.color = "";
+    }, 4000);
   }
 
   function uploadFiles(files) {
@@ -331,10 +417,255 @@
 
   async function deleteUser(username) {
     if (!confirm(`Delete user "${username}"?`)) return;
+    if (!confirm("Are you really sure? This cannot be undone.")) return;
     try {
       const res = await fetch(`/api/users/${encodeURIComponent(username)}`, { method: "DELETE" });
       if (res.ok) loadUserList();
     } catch (_) {}
+  }
+
+  /* My Submissions */
+  async function loadMySubmissions() {
+    if (isAdmin) return;
+    try {
+      const res = await fetch("/api/my-submissions");
+      if (res.status === 401) { window.location.href = "/login"; return; }
+      if (!res.ok) return;
+      const data = await res.json();
+      const section = document.getElementById("mySubmissions");
+      const list = document.getElementById("mySubmissionsList");
+
+      if (data.files.length === 0) {
+        section.classList.add("hidden");
+        return;
+      }
+
+      section.classList.remove("hidden");
+      list.innerHTML = data.files
+        .map((f) => {
+          const sizeMB = (f.size / (1024 * 1024)).toFixed(2);
+          const remaining = formatRemaining(f.remaining);
+          return `
+          <div class="my-submission-item">
+            <div class="my-submission-info">
+              <span class="my-submission-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+              <span class="my-submission-meta">${sizeMB} MB${f.can_delete ? " · " + remaining : " · Delete expired"}</span>
+            </div>
+            ${f.can_delete ? `<button class="btn-icon btn-danger-icon" data-my-delete="${escapeHtml(f.name)}" title="Delete">✕</button>` : ""}
+          </div>`;
+        })
+        .join("");
+
+      list.querySelectorAll("[data-my-delete]").forEach((btn) => {
+        btn.addEventListener("click", () => deleteMySubmission(btn.dataset.myDelete));
+      });
+    } catch (_) {}
+  }
+
+  function formatRemaining(seconds) {
+    if (seconds <= 0) return "Delete expired";
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0 && m > 0) return `${h} hour${h > 1 ? "s" : ""} ${m} minute${m > 1 ? "s" : ""} left to delete`;
+    if (h > 0) return `${h} hour${h > 1 ? "s" : ""} left to delete`;
+    return `${m} minute${m > 1 ? "s" : ""} left to delete`;
+  }
+
+  async function deleteMySubmission(filename) {
+    if (!confirm(`Delete "${filename}"?`)) return;
+    try {
+      const res = await fetch(`/api/my-submissions/${encodeURIComponent(filename)}`, { method: "DELETE" });
+      const data = await res.json();
+      if (res.ok) {
+        loadMySubmissions();
+      } else {
+        showError(data.error || "Delete failed");
+      }
+    } catch (_) {
+      showError("Network error");
+    }
+  }
+
+  /* Admin Dashboard */
+  function openUploadsModal() {
+    document.getElementById("uploadsModalOverlay").classList.remove("hidden");
+    loadUploadsModal();
+    loadCleanupStatus();
+
+    const isIT = window.__CURRENT_USER === "IT";
+    document.getElementById("logsDivider").classList.toggle("hidden", !isIT);
+    document.getElementById("logsTitle").classList.toggle("hidden", !isIT);
+    document.getElementById("logsViewer").classList.toggle("hidden", !isIT);
+    if (isIT) loadLogs();
+  }
+
+  function closeUploadsModal() {
+    document.getElementById("uploadsModalOverlay").classList.add("hidden");
+  }
+
+  async function loadUploadsModal() {
+    const list = document.getElementById("uploadsModalList");
+    try {
+      const res = await fetch("/api/admin/uploads");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.users.length === 0) {
+        list.innerHTML = '<p class="text-muted">No submissions yet</p>';
+      } else {
+        list.innerHTML = data.users
+          .map(
+            (u) => `
+            <div class="admin-user-card${u.count === 0 ? " no-uploads" : ""}">
+              <div class="admin-user-header">
+                <span class="admin-user-name">${escapeHtml(u.username)}</span>
+                <span class="admin-file-count ${u.count === 0 ? "text-muted" : ""}">${u.count === 0 ? "No uploads" : u.count + " file(s)"}</span>
+              </div>
+              ${u.count > 0 ? `
+              <div class="admin-file-list">
+                ${u.files.map((f) => `
+                  <div class="admin-file-row">
+                    <span class="admin-file-name">${escapeHtml(f)}</span>
+                    <button class="btn-icon btn-danger-icon" data-modal-delete="${escapeHtml(u.username)}/${escapeHtml(f)}" title="Delete">✕</button>
+                  </div>
+                `).join("")}
+              </div>` : ""}
+            </div>`
+          )
+          .join("");
+        list.querySelectorAll("[data-modal-delete]").forEach((btn) => {
+          btn.addEventListener("click", () => modalDeleteFile(btn.dataset.modalDelete));
+        });
+      }
+    } catch (_) {
+      list.innerHTML = '<p class="text-muted">Failed to load uploads</p>';
+    }
+  }
+
+  async function modalDeleteFile(path) {
+    if (!confirm("Delete this file?")) return;
+    try {
+      const res = await fetch(`/api/admin/uploads/${path}`, { method: "DELETE" });
+      if (res.ok) loadUploadsModal();
+    } catch (_) {}
+  }
+
+  /* Site Settings */
+  function openSiteSettings() {
+    document.getElementById("siteSettingsOverlay").classList.remove("hidden");
+    loadSiteSettingsForm();
+  }
+
+  function closeSiteSettings() {
+    document.getElementById("siteSettingsOverlay").classList.add("hidden");
+  }
+
+  async function loadSiteSettingsForm() {
+    try {
+      const res = await fetch("/api/site-config");
+      if (!res.ok) return;
+      const data = await res.json();
+      document.getElementById("dailyQuoteInput").value = data.daily_quote || "";
+      document.getElementById("maintenanceInput").value = data.maintenance_message || "";
+    } catch (_) {}
+  }
+
+  async function saveSiteSettings() {
+    const alertEl = document.getElementById("siteSettingsAlert");
+    alertEl.classList.add("hidden");
+    try {
+      const res = await fetch("/api/admin/site-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          daily_quote: document.getElementById("dailyQuoteInput").value.trim(),
+          maintenance_message: document.getElementById("maintenanceInput").value.trim(),
+        }),
+      });
+      if (res.ok) {
+        alertEl.textContent = "Settings saved";
+        alertEl.classList.remove("hidden", "error");
+        loadSiteConfig();
+      } else {
+        alertEl.textContent = "Failed to save";
+        alertEl.classList.remove("hidden");
+        alertEl.classList.add("error");
+      }
+    } catch (_) {
+      alertEl.textContent = "Network error";
+      alertEl.classList.remove("hidden");
+      alertEl.classList.add("error");
+    }
+  }
+
+  async function loadSiteConfig() {
+    try {
+      const res = await fetch("/api/site-config");
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const quoteEl = document.getElementById("dailyQuote");
+      if (data.daily_quote) {
+        quoteEl.textContent = "\u201C" + data.daily_quote + "\u201D";
+        quoteEl.classList.remove("hidden");
+      } else {
+        quoteEl.classList.add("hidden");
+      }
+
+      const bannerEl = document.getElementById("maintenanceBanner");
+      if (data.maintenance_message) {
+        document.getElementById("maintenanceText").textContent = data.maintenance_message;
+        bannerEl.classList.remove("hidden");
+      } else {
+        bannerEl.classList.add("hidden");
+      }
+    } catch (_) {}
+  }
+
+  /* Cleanup */
+  async function loadCleanupStatus() {
+    try {
+      const res = await fetch("/api/admin/cleanup-status");
+      if (!res.ok) return;
+      const data = await res.json();
+      document.getElementById("cleanupToggle").checked = data.enabled;
+    } catch (_) {}
+  }
+
+  async function toggleCleanup() {
+    const enabled = document.getElementById("cleanupToggle").checked;
+    try {
+      await fetch("/api/admin/cleanup-toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+    } catch (_) {}
+  }
+
+  async function runCleanup() {
+    if (!confirm("Delete all PDFs older than 90 days?")) return;
+    try {
+      const res = await fetch("/api/admin/cleanup", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        showSuccess(`Cleanup done — ${data.deleted} file(s) deleted`);
+        loadUploadsModal();
+      }
+    } catch (_) {}
+  }
+
+  /* Logs */
+  async function loadLogs() {
+    try {
+      const res = await fetch("/api/logs");
+      if (!res.ok) return;
+      const data = await res.json();
+      const viewer = document.getElementById("logsViewer");
+      viewer.textContent = data.logs || "No logs yet";
+      viewer.scrollTop = viewer.scrollHeight;
+    } catch (_) {
+      document.getElementById("logsViewer").textContent = "Failed to load logs";
+    }
   }
 
   /* Event listeners */
@@ -372,6 +703,27 @@
   document.getElementById("generatePwBtn").addEventListener("click", () => {
     document.getElementById("newPassword").value = generatePassword(16);
   });
+  document.getElementById("submitFilesBtn").addEventListener("click", submitStagedFiles);
+  document.getElementById("clearStagingBtn").addEventListener("click", () => {
+    stagedFiles = [];
+    renderStaging();
+  });
+  document.getElementById("uploadsBtn").addEventListener("click", openUploadsModal);
+  document.getElementById("closeUploadsModal").addEventListener("click", closeUploadsModal);
+  document.getElementById("uploadsModalOverlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeUploadsModal();
+  });
+  document.getElementById("refreshMySubmissionsBtn").addEventListener("click", loadMySubmissions);
+  document.getElementById("cleanupToggle").addEventListener("change", toggleCleanup);
+  document.getElementById("runCleanupBtn").addEventListener("click", runCleanup);
+
+  document.getElementById("siteSettingsBtn").addEventListener("click", openSiteSettings);
+  document.getElementById("closeSiteSettings").addEventListener("click", closeSiteSettings);
+  document.getElementById("siteSettingsOverlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeSiteSettings();
+  });
+  document.getElementById("saveSiteSettingsBtn").addEventListener("click", saveSiteSettings);
 
   updateAdminUI();
+  loadSiteConfig();
 })();
