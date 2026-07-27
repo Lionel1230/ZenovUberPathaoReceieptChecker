@@ -522,18 +522,25 @@
               </div>
               ${u.count > 0 ? `
               <div class="admin-file-list">
-                ${u.files.map((f) => `
+                ${u.files.map((f) => {
+                  const v = f.verdict || "";
+                  const verdictLabel = v === "real" ? "Real PDF" : v === "fake" ? "Fake PDF" : v === "error" ? "Error" : "Unknown";
+                  const verdictClass = v === "real" ? "verdict-real" : v === "fake" ? "verdict-fake" : v === "error" ? "verdict-error" : "verdict-unknown";
+                  const source = f.producer || f.creator || "";
+                  return `
                   <div class="admin-file-row">
-                    <span class="admin-file-name">${escapeHtml(f)}</span>
-                    <button class="btn-icon btn-danger-icon" data-modal-delete="${escapeHtml(u.username)}/${escapeHtml(f)}" title="Delete">✕</button>
-                  </div>
-                `).join("")}
+                    <span class="admin-file-name">${escapeHtml(f.name)}</span>
+                    <span class="admin-file-verdict ${verdictClass}">${verdictLabel}</span>
+                    ${source ? `<span class="admin-file-source">${escapeHtml(source)}</span>` : ""}
+                    <button class="btn-icon btn-danger-icon" data-modal-delete="${escapeHtml(u.username)}/${escapeHtml(f.name)}" title="Delete">✕</button>
+                  </div>`;
+                }).join("")}
               </div>` : ""}
             </div>`
           )
           .join("");
         list.querySelectorAll("[data-modal-delete]").forEach((btn) => {
-          btn.addEventListener("click", () => modalDeleteFile(btn.dataset.modalDelete));
+          btn.addEventListener("click", () => modalDeleteFile(btn.getAttribute("data-modal-delete")));
         });
       }
     } catch (_) {

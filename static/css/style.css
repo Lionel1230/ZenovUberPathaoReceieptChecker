@@ -871,7 +871,7 @@ body {
 .admin-file-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 0.5rem;
   padding: 0.4rem 0.5rem;
   border-radius: 4px;
   transition: background var(--transition);
@@ -883,14 +883,54 @@ body {
 
 .admin-file-name {
   font-size: 0.85rem;
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.admin-file-verdict {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 99px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.verdict-real {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
+.verdict-fake {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.verdict-error {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+.verdict-unknown {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.admin-file-source {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
 /* Uploads Modal */
 .uploads-modal {
-  max-width: 560px;
+  max-width: 680px;
 }
 
 .cleanup-bar {

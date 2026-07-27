@@ -436,10 +436,27 @@ def submit_files():
             dest = user_dir / f"{stem}_{counter}.pdf"
             counter += 1
         file.save(str(dest))
-        saved.append(safe_name)
+        saved.append((safe_name, dest))
 
+    results_path = user_dir / "_results.json"
+    existing_results = {}
+    if results_path.exists():
+        try:
+            existing_results = json.loads(results_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing_results = {}
+
+    for safe_name, dest in saved:
+        try:
+            r = analyze_pdfs([(dest, safe_name)])
+            if r:
+                existing_results[safe_name] = _result_to_dict(r[0])
+        except Exception:
+            existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "Analysis failed"}
+
+    results_path.write_text(json.dumps(existing_results, indent=2), encoding="utf-8")
     logger.info("User '%s' submitted %d files", username, len(saved))
-    return jsonify({"message": f"{len(saved)} file(s) submitted successfully", "files": saved})
+    return jsonify({"message": f"{len(saved)} file(s) submitted successfully", "files": [s for s, _ in saved]})
 
 
 @app.route("/api/my-submissions", methods=["GET"])
@@ -511,7 +528,24 @@ def admin_uploads():
     result = []
     for username in sorted(normal_users):
         files = uploaded.get(username, [])
-        result.append({"username": username, "files": files, "count": len(files)})
+        results = {}
+        user_dir = submissions_dir / username
+        results_path = user_dir / "_results.json"
+        if results_path.exists():
+            try:
+                results = json.loads(results_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        file_data = []
+        for fname in files:
+            info = results.get(fname, {})
+            file_data.append({
+                "name": fname,
+                "verdict": info.get("verdict", ""),
+                "producer": info.get("producer", ""),
+                "creator": info.get("creator", ""),
+            })
+        result.append({"username": username, "files": file_data, "count": len(files)})
 
     return jsonify({"users": result})
 
