@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets
@@ -11,6 +12,7 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 
 from analyzer import analyze_pdfs
@@ -22,8 +24,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+load_dotenv()
+
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_ROOT = BASE_DIR / "uploads"
+USERS_FILE = BASE_DIR / "users.txt"
+ADMIN_ROLES = {"root", "admin", "IT"}
+
 UPLOAD_ROOT.mkdir(exist_ok=True)
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB per file
@@ -33,8 +40,23 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE * MAX_FILES
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 
-USERS_FILE = BASE_DIR / "users.txt"
-ADMIN_ROLES = {"root", "admin", "IT"}
+
+def _seed_users_file() -> None:
+    """If users.txt is missing, seed it from the USERS env var."""
+    if USERS_FILE.exists():
+        return
+    env_users = os.environ.get("USERS")
+    if env_users:
+        try:
+            users = json.loads(env_users)
+            lines = [f"{u}:{p}" for u, p in users.items()]
+            USERS_FILE.write_text("\n".join(lines) + "\n")
+            logger.info("Seeded users.txt from USERS env var")
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Failed to parse USERS env var, no users seeded")
+
+
+_seed_users_file()
 
 
 def _load_users() -> dict[str, str]:
