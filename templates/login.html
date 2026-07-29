@@ -13,32 +13,34 @@
       <span id="maintenanceText"></span>
     </div>
 
-    <div class="login-card card">
-      <div class="login-header">
-        <img src="{{ url_for('static', filename='Zenov_Logo_BG.png') }}" alt="Zenov" width="220" height="220" />
-        <h1>Zenov Conveyance Management</h1>
-        <span class="beta-tag">BETA</span>
-        <p class="subtitle">Sign in to continue</p>
-      </div>
-
-      {% if error %}
-      <div class="alert">{{ error }}</div>
-      {% endif %}
-
-      <form method="POST" action="{{ url_for('login') }}" class="login-form">
-        <div class="field">
-          <label for="username">Username</label>
-          <input type="text" id="username" name="username" required autofocus autocomplete="username" />
+    <div class="card login-card">
+      <div class="card-content">
+        <div class="login-header">
+          <img src="{{ url_for('static', filename='Zenov_Logo_BG.png') }}" alt="Zenov" />
+          <h1>Zenov Conveyance Management</h1>
+          <span class="badge badge-default">BETA</span>
+          <p class="text-sm text-muted" style="margin-top:0.5rem">Sign in to continue</p>
         </div>
-        <div class="field">
-          <label for="password">Password</label>
-          <input type="password" id="password" name="password" required autocomplete="current-password" />
-        </div>
-        <button type="submit" class="btn btn-primary login-btn">Sign In</button>
-      </form>
 
-      <div class="login-footer">
-        <a href="{{ url_for('register_request_page') }}" class="btn btn-secondary login-btn">Create Account</a>
+        {% if error %}
+        <div class="alert alert-error" role="alert">{{ error }}</div>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('login') }}" class="login-form">
+          <div class="field">
+            <label class="label" for="username">Username</label>
+            <input class="input" type="text" id="username" name="username" required autofocus autocomplete="username" />
+          </div>
+          <div class="field">
+            <label class="label" for="password">Password</label>
+            <input class="input" type="password" id="password" name="password" required autocomplete="current-password" />
+          </div>
+          <button type="submit" class="btn btn-default btn-full">Sign In</button>
+        </form>
+
+        <div class="login-footer">
+          <a href="{{ url_for('register_request_page') }}" class="btn btn-outline btn-full" style="margin-top:0.5rem">Create Account</a>
+        </div>
       </div>
     </div>
 

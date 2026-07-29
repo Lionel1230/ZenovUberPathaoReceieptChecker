@@ -618,20 +618,6 @@ def my_submissions():
     if not user_dir.exists():
         return jsonify({"files": []})
 
-    results_path = user_dir / "_results.json"
-    user_results = {}
-    if results_path.exists():
-        try:
-            user_results = json.loads(results_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-
-    sha1_counts: dict[str, int] = {}
-    for info in user_results.values():
-        s = info.get("sha1", "")
-        if s:
-            sha1_counts[s] = sha1_counts.get(s, 0) + 1
-
     now = time.time()
     files = []
     for verdict_folder in ("Real", "Fake"):
@@ -642,16 +628,12 @@ def my_submissions():
             if f.is_file() and f.suffix.lower() == ".pdf":
                 mtime = f.stat().st_mtime
                 age = now - mtime
-                info = user_results.get(f.name, {})
-                sha1 = info.get("sha1", "")
                 files.append({
                     "name": f.name,
                     "size": f.stat().st_size,
                     "uploaded": mtime,
                     "can_delete": age < DELETE_TIME_LIMIT,
                     "remaining": max(0, int(DELETE_TIME_LIMIT - age)),
-                    "folder": verdict_folder,
-                    "duplicate": sha1 != "" and sha1_counts.get(sha1, 0) > 1,
                 })
 
     return jsonify({"files": files})
