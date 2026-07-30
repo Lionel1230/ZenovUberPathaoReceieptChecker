@@ -495,8 +495,8 @@ def submit_register_request():
     if not name or not team or not gmail:
         return jsonify({"error": "All fields are required"}), 400
 
-    if "@" not in gmail or not gmail.endswith("@gmail.com"):
-        return jsonify({"error": "Please enter a valid Gmail address"}), 400
+    if "@" not in gmail or "." not in gmail.split("@")[-1]:
+        return jsonify({"error": "Please enter a valid email address"}), 400
 
     requests_list = _load_reg_requests()
 

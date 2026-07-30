@@ -22,7 +22,7 @@
   let currentUser = window.__CURRENT_USER || "";
   let isAdmin = ["root", "admin", "IT"].includes(currentUser);
   let stagedFiles = [];
-  let showPasswords = false;
+
   let userData = {};
   console.log("DEBUG currentUser:", JSON.stringify(currentUser), "isAdmin:", isAdmin);
 
@@ -38,6 +38,7 @@
     if (isAdmin) {
       loadUploadsAdminList();
       loadCleanupStatus();
+      loadRequestsBadge();
     }
   }
 
@@ -262,7 +263,7 @@
       return '<div class="staging-item">' +
         '<span class="staging-name" title="' + escapeHtml(f.name) + '">' + escapeHtml(f.name) + '</span>' +
         '<span class="staging-size">' + (f.size / (1024 * 1024)).toFixed(2) + ' MB</span>' +
-        '<button class="btn btn-ghost btn-icon btn-sm" data-remove="' + i + '" title="Remove" style="color:hsl(var(--destructive));font-size:0.5em">&times;</button>' +
+        '<button class="btn-remove" data-remove="' + i + '" title="Remove">&times;</button>' +
         '</div>';
     }).join("");
     stagingList.querySelectorAll("[data-remove]").forEach(function (btn) {
@@ -515,24 +516,34 @@
     var list = document.getElementById("userList");
     list.innerHTML = skeletonHtml(6, "user-card");
     try {
-      var res = showPasswords ? await fetch("/api/users/with-passwords") : await fetch("/api/users");
+      var res = await fetch("/api/users/with-passwords");
       if (!res.ok) return;
       var data = await res.json();
       if (!data.users.length) { list.innerHTML = emptyStateHtml("No users yet"); return; }
       list.innerHTML = data.users.map(function (u) {
         var picUrl = "/api/profile-pic/" + encodeURIComponent(u.username);
+        var pwId = "pw-" + encodeURIComponent(u.username);
         return '<div class="user-row">' +
           '<div class="user-cell" style="display:flex;align-items:center;gap:0.5rem;flex:1">' +
           '<img class="profile-pic profile-pic-sm" src="' + picUrl + '" alt="" onerror="this.style.display=\'none\'" />' +
           '<span class="user-name">' + escapeHtml(u.username) + "</span>" +
           "</div>" +
-          (showPasswords && u.password ? '<span class="user-password">' + escapeHtml(u.password) + "</span>" : "") +
-          (u.username !== "root" && u.username !== currentUser ? '<button class="btn btn-ghost btn-icon btn-sm" data-delete="' + escapeHtml(u.username) + '" title="Delete user" style="color:hsl(var(--destructive));font-size:0.5em">&times;</button>' : "") +
+          (u.password ? '<span style="display:flex;align-items:center;gap:0.25rem"><input class="user-password-input" id="' + pwId + '" type="password" value="' + escapeHtml(u.password) + '" readonly /><button class="pw-toggle" data-pw="' + pwId + '" title="Toggle password visibility"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></span>' : "") +
+          (u.username !== "root" && u.username !== currentUser ? '<button class="btn-remove" data-delete="' + escapeHtml(u.username) + '" title="Delete">&times;</button>' : "") +
           "</div>";
       }).join("");
       list.querySelectorAll("[data-delete]").forEach(function (btn) { btn.addEventListener("click", function () { deleteUser(btn.dataset.delete); }); });
+      list.querySelectorAll(".pw-toggle").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var input = document.getElementById(btn.dataset.pw);
+          input.type = input.type === "password" ? "text" : "password";
+        });
+      });
+      filterUsersModal();
     } catch (_) { list.innerHTML = emptyStateHtml("Failed to load users"); }
   }
+
+
 
   async function createUser() {
     var btn = document.getElementById("createUserBtn");
@@ -593,7 +604,7 @@
             '<span class="submission-name" title="' + escapeHtml(f.name) + '">' + escapeHtml(f.name) + "</span>" +
             '<span class="submission-meta">' + sizeMB + " MB" + (f.can_delete ? " . " + remaining : " . Delete expired") + "</span>" +
             "</div>" +
-            (f.can_delete ? '<button class="btn btn-ghost btn-icon btn-sm" data-my-delete=\'' + escapeHtml(JSON.stringify({month:f.month,name:f.name})) + "' title=\"Delete\" style=\"color:hsl(var(--destructive));font-size:0.5em\">&times;</button>" : "") +
+            (f.can_delete ? '<button class="btn-remove" data-my-delete=\'' + escapeHtml(JSON.stringify({month:f.month,name:f.name})) + "' title=\"Delete\">&times;</button>" : "") +
             "</div>";
         }).join("");
         html += "</div>";
@@ -631,12 +642,7 @@
 
   /* --- Billing --- */
   function loadExistingMonthBill(month) {
-    var input = document.getElementById("monthBillInput");
-    if (!month) { input.value = ""; return; }
-    fetch("/api/billing").then(function (r) { return r.json(); }).then(function (data) {
-      var bill = (data.total_bills && data.total_bills[month]) || 0;
-      input.value = bill > 0 ? bill : "";
-    }).catch(function () {});
+    document.getElementById("monthBillInput").value = "";
   }
 
   async function loadBillList() {
@@ -734,7 +740,7 @@
               (f.duplicate ? '<span class="badge badge-destructive" style="font-size:0.7rem">Duplicate</span>' : "") +
               '<button class="verify-btn ' + verifClass + '" data-verify=\'' + escapeHtml(JSON.stringify({user:u.username,month:f.month,name:f.name})) + "' title=\"Toggle verification\">" + verifLabel + "</button>" +
               (source ? '<span class="admin-file-source">' + escapeHtml(source) + "</span>" : "") +
-              '<button class="btn btn-ghost btn-icon btn-sm" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\" style=\"color:hsl(var(--destructive));font-size:0.5em\">&times;</button>" +
+              '<button class="btn-remove" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\">&times;</button>" +
               "</div>";
           }).join("") + "</div>" : "") +
           "</div>";
@@ -742,9 +748,36 @@
       list.querySelectorAll("[data-modal-delete]").forEach(function (btn) { btn.addEventListener("click", function () { modalDeleteFile(btn.getAttribute("data-modal-delete")); }); });
       list.querySelectorAll("[data-open-folder]").forEach(function (btn) { btn.addEventListener("click", function () { openUserFolder(btn.dataset.openFolder); }); });
       list.querySelectorAll("[data-verify]").forEach(function (btn) { btn.addEventListener("click", function () { toggleVerification(btn.dataset.verify); }); });
+      filterUploadsModal();
     } catch (_) { list.innerHTML = emptyStateHtml("Failed to load uploads"); }
   }
 
+  function filterUploadsModal() {
+    var q = (document.getElementById("uploadsSearch").value || "").toLowerCase().trim();
+    var list = document.getElementById("uploadsModalList");
+    list.querySelectorAll(".admin-user-card").forEach(function (card) {
+      var name = card.querySelector(".admin-user-name").textContent.toLowerCase();
+      card.style.display = (!q || name.indexOf(q) !== -1) ? "" : "none";
+    });
+  }
+
+  function filterUsersModal() {
+    var q = (document.getElementById("usersSearch").value || "").toLowerCase().trim();
+    var list = document.getElementById("userList");
+    list.querySelectorAll(".user-row").forEach(function (row) {
+      var name = row.querySelector(".user-name").textContent.toLowerCase();
+      row.style.display = (!q || name.indexOf(q) !== -1) ? "" : "none";
+    });
+  }
+
+  function filterRequestsModal() {
+    var q = (document.getElementById("requestsSearch").value || "").toLowerCase().trim();
+    var list = document.getElementById("regRequestsList");
+    list.querySelectorAll(".reg-request-card").forEach(function (card) {
+      var text = card.textContent.toLowerCase();
+      card.style.display = (!q || text.indexOf(q) !== -1) ? "" : "none";
+    });
+  }
 
   function filterAdminUploads() {
     var q = (document.getElementById("adminUploadsSearch").value || "").toLowerCase().trim();
@@ -758,13 +791,7 @@
   async function loadUploadsAdminList() {
     var list = document.getElementById("uploadsAdminList");
     if (!list) return;
-    if (!document.getElementById("adminUploadsSearch")) {
-      var wrapper = document.createElement("div");
-      wrapper.style.marginBottom = "0.75rem";
-      wrapper.innerHTML = '<input class="input" id="adminUploadsSearch" type="text" placeholder="Search by username..." style="max-width:20rem" />';
-      list.parentNode.insertBefore(wrapper, list);
-      document.getElementById("adminUploadsSearch").addEventListener("keyup", filterAdminUploads);
-    }
+    if (!document.getElementById("adminUploadsSearch").dataset.bound) { document.getElementById("adminUploadsSearch").dataset.bound = "1"; document.getElementById("adminUploadsSearch").addEventListener("keyup", filterAdminUploads); }
     var cleanupBtn = document.getElementById("runCleanupBtn");
     if (cleanupBtn) { cleanupBtn.classList.remove("btn-outline"); cleanupBtn.classList.add("btn-destructive"); }
     list.innerHTML = skeletonHtml(8, "file-list");
@@ -798,7 +825,7 @@
               (f.duplicate ? '<span class="badge badge-destructive" style="font-size:0.7rem">Duplicate</span>' : "") +
               '<button class="verify-btn ' + verifClass + '" data-verify=\'' + escapeHtml(JSON.stringify({user:u.username,month:f.month,name:f.name})) + "' title=\"Toggle verification\">" + verifLabel + "</button>" +
               (source ? '<span class="admin-file-source">' + escapeHtml(source) + "</span>" : "") +
-              '<button class="btn btn-ghost btn-icon btn-sm" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\" style=\"color:hsl(var(--destructive));font-size:0.5em\">&times;</button>" +
+              '<button class="btn-remove" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\">&times;</button>" +
               "</div>";
           }).join("") + "</div>" : "") +
           "</div>";
@@ -812,7 +839,7 @@
 
   async function modalDeleteFile(path) {
     if (!confirm("Delete this file?")) return;
-    try { var res = await fetch("/api/admin/uploads/" + path, { method: "DELETE" }); var data = await res.json(); if (res.ok) { showToast(data.message || "File deleted", "success"); loadUploadsAdminList(); } else { showToast(data.error || "Delete failed"); } } catch (_) { showToast("Network error"); }
+    try { var res = await fetch("/api/admin/uploads/" + path, { method: "DELETE" }); var data = await res.json(); if (res.ok) { showToast(data.message || "File deleted", "success"); if (document.getElementById("uploadsModalList")) loadUploadsModal(); } else { showToast(data.error || "Delete failed"); } } catch (_) { showToast("Network error"); }
   }
 
   async function openUserFolder(username) { try { await fetch("/api/admin/open-folder/" + encodeURIComponent(username)); } catch (_) {} }
@@ -823,12 +850,33 @@
     try {
       var res = await fetch("/api/admin/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: info.user, month: info.month, filename: info.name }) });
       var data = await res.json();
-      if (res.ok) { showToast(data.message || "Verification toggled", "success"); loadUploadsAdminList(); } else showToast(data.error || "Failed");
+      if (res.ok) { showToast(data.message || "Verification toggled", "success"); if (document.getElementById("uploadsModalList")) loadUploadsModal(); } else showToast(data.error || "Failed");
     } catch (_) { showToast("Network error"); }
   }
 
   /* --- Registration Requests --- */
+  async function loadRequestsBadge() {
+    var btn = document.getElementById("regRequestsBtn");
+    if (!btn) return;
+    try {
+      var res = await fetch("/api/admin/registration-requests");
+      if (!res.ok) return;
+      var data = await res.json();
+      var count = data.requests ? data.requests.length : 0;
+      var existing = btn.querySelector(".badge");
+      if (existing) existing.remove();
+      if (count > 0) {
+        var badge = document.createElement("span");
+        badge.className = "badge badge-destructive";
+        badge.textContent = count;
+        badge.style.marginLeft = "0.35rem";
+        btn.appendChild(badge);
+      }
+    } catch (_) {}
+  }
+
   async function loadRegRequests() {
+    loadRequestsBadge();
     var list = document.getElementById("regRequestsList");
     list.innerHTML = skeletonHtml(4, "reg-card");
     try {
@@ -849,8 +897,11 @@
       }).join("");
       list.querySelectorAll("[data-copy]").forEach(function (btn) { btn.addEventListener("click", function () { navigator.clipboard.writeText(btn.dataset.copy); btn.textContent = "Copied!"; setTimeout(function () { btn.textContent = "Copy"; }, 1500); }); });
       list.querySelectorAll("[data-delete-reg]").forEach(function (btn) { btn.addEventListener("click", function () { deleteRegRequest(btn.dataset.deleteReg); }); });
+      filterRequestsModal();
     } catch (_) { list.innerHTML = emptyStateHtml("Failed to load requests"); }
   }
+
+
 
   async function deleteRegRequest(gmail) {
     if (!confirm("Remove this request?")) return;
@@ -941,7 +992,13 @@
   onId("userModalOverlay", "click", function (e) { if (e.target === this) closeDialog(document.getElementById("userModalOverlay")); });
   onId("createUserBtn", "click", createUser);
   onId("generatePwBtn", "click", function () { document.getElementById("newPassword").value = generatePassword(16); });
-  onId("togglePasswordsBtn", "click", function () { showPasswords = !showPasswords; document.getElementById("togglePasswordsBtn").textContent = showPasswords ? "Hide Passwords" : "Show Passwords"; loadUserList(); });
+  onId("togglePasswordsBtn", "click", function () {
+    var btn = document.getElementById("togglePasswordsBtn");
+    var showAll = btn.dataset.showall !== "1";
+    btn.dataset.showall = showAll ? "1" : "0";
+    btn.textContent = showAll ? "Hide All" : "Show All";
+    document.querySelectorAll("#userList .user-password-input").forEach(function (inp) { inp.type = showAll ? "text" : "password"; });
+  });
   onId("uploadsBtn", "click", function () { openDialog(document.getElementById("uploadsModalOverlay")); loadUploadsModal(); loadCleanupStatus(); var isIT = currentUser === "IT"; document.getElementById("logsDivider").classList.toggle("hidden", !isIT); document.getElementById("logsTitle").classList.toggle("hidden", !isIT); document.getElementById("logsViewer").classList.toggle("hidden", !isIT); if (isIT) loadLogs(); });
   onId("closeUploadsModal", "click", function () { closeDialog(document.getElementById("uploadsModalOverlay")); });
   onId("uploadsModalOverlay", "click", function (e) { if (e.target === this) closeDialog(document.getElementById("uploadsModalOverlay")); });
@@ -961,5 +1018,9 @@
   document.querySelectorAll(".admin-tab").forEach(function (btn) {
     btn.addEventListener("click", function () { switchAdminTab(btn.dataset.atab); });
   });
+
+  onId("uploadsSearch", "keyup", filterUploadsModal);
+  onId("usersSearch", "keyup", filterUsersModal);
+  onId("requestsSearch", "keyup", filterRequestsModal);
 
 })();

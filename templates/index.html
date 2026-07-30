@@ -200,6 +200,9 @@
             </div>
             <button class="btn btn-outline btn-sm" id="runCleanupBtn">Run Cleanup Now</button>
           </div>
+          <div style="margin-bottom:0.5rem">
+            <input class="input" id="uploadsSearch" type="text" placeholder="Search by username..." style="max-width:20rem" />
+          </div>
           <div id="uploadsModalList"></div>
           <div class="separator hidden" id="logsDivider"></div>
           <h3 class="h3 hidden" style="margin-bottom:0.75rem" id="logsTitle">Recent Logs</h3>
@@ -213,22 +216,27 @@
           <div class="dialog-header">
             <h2 class="dialog-title">Manage Users</h2>
             <div style="display:flex;align-items:center;gap:0.5rem">
-              <button class="btn btn-outline btn-sm" id="togglePasswordsBtn">Show Passwords</button>
+              <button class="btn btn-outline btn-sm" id="togglePasswordsBtn">Show All</button>
               <button class="dialog-close" id="closeUserModal" title="Close">&times;</button>
             </div>
           </div>
-          <div class="user-list" id="userList"></div>
-          <div class="separator"></div>
-          <h3 class="h3" style="margin-bottom:0.75rem">Add New User</h3>
-          <div class="alert alert-error hidden" id="userModalError"></div>
-          <div class="create-user-form">
-            <input class="input" type="text" id="newUsername" placeholder="Username" autocomplete="off" />
-            <div class="password-row">
-              <input class="input" type="text" id="newPassword" placeholder="Password" autocomplete="off" />
-              <button class="btn btn-secondary btn-sm" id="generatePwBtn" title="Auto-generate password">Generate</button>
+          <div class="create-user-card">
+            <h3 class="h3" style="margin:0 0 0.6rem 0;font-size:0.9rem">Add New User</h3>
+            <div class="alert alert-error hidden" id="userModalError"></div>
+            <div class="create-user-form">
+              <input class="input" type="text" id="newUsername" placeholder="Username" autocomplete="off" />
+              <div class="password-row">
+                <input class="input" type="text" id="newPassword" placeholder="Password" autocomplete="off" />
+                <button class="btn btn-secondary btn-sm" id="generatePwBtn" title="Auto-generate password">Generate</button>
+              </div>
+              <button class="btn btn-default" id="createUserBtn">Create User</button>
             </div>
-            <button class="btn btn-default" id="createUserBtn">Create User</button>
           </div>
+          <div class="separator"></div>
+          <div style="margin-bottom:0.5rem">
+            <input class="input" id="usersSearch" type="text" placeholder="Search by username..." style="max-width:20rem" />
+          </div>
+          <div class="user-list" id="userList"></div>
         </div>
       </div>
 
@@ -238,6 +246,9 @@
           <div class="dialog-header">
             <h2 class="dialog-title">Registration Requests</h2>
             <button class="dialog-close" id="closeRegRequests" title="Close">&times;</button>
+          </div>
+          <div style="margin-bottom:0.5rem">
+            <input class="input" id="requestsSearch" type="text" placeholder="Search by name, team or email..." style="max-width:24rem" />
           </div>
           <div id="regRequestsList"></div>
         </div>
