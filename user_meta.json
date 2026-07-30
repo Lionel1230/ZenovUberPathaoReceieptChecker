@@ -8,5 +8,11 @@
       "January": 600.0
     },
     "profile_pic": true
+  },
+  "user": {
+    "total_bills": {
+      "June": 500.0,
+      "January": 698.0
+    }
   }
 }

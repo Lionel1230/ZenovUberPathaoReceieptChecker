@@ -229,7 +229,8 @@ body{
 
 /* ─── tabs ─── */
 .tabs{display:flex;gap:0.25rem;background:hsl(var(--secondary));border-radius:var(--radius);padding:0.25rem}
-.tabs-trigger{padding:0.5rem 1rem;font-size:0.8125rem;font-weight:500;border-radius:calc(var(--radius) - 2px);background:transparent;border:none;color:hsl(var(--muted-fg));cursor:pointer;transition:all .15s;white-space:nowrap;font-family:inherit}
+  .tabs-trigger{padding:0.5rem 1rem;font-size:0.8125rem;font-weight:500;border-radius:calc(var(--radius) - 2px);background:transparent;border:none;color:hsl(var(--muted-fg));cursor:pointer;transition:all .15s;white-space:nowrap;font-family:inherit}
+  .btn-full{width:100%;justify-content:center}
 .tabs-trigger:hover{color:hsl(var(--fg))}
 .tabs-trigger.active{background:hsl(var(--bg));color:hsl(var(--fg));box-shadow:0 1px 3px rgba(0,0,0,0.3)}
 

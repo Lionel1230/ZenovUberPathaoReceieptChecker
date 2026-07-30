@@ -184,6 +184,21 @@ def login():
     return render_template("login.html")
 
 
+@app.route("/demo-login/<role>")
+def demo_login(role):
+    if role not in ("admin", "user"):
+        return redirect(url_for("login"))
+    username = role
+    password = role
+    users = _load_users()
+    if username not in users:
+        with open(str(USERS_FILE), "a", encoding="utf-8") as f:
+            f.write(f"{username}:{password}\n")
+        logger.info("Demo user '%s' created in users.txt", username)
+    session["authenticated"] = True
+    session["username"] = username
+    return redirect(url_for("index"))
+
 @app.route("/logout")
 def logout():
     session.clear()

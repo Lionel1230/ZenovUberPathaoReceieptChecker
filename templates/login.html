@@ -41,6 +41,10 @@
         <div class="login-footer">
           <a href="{{ url_for('register_request_page') }}" class="btn btn-outline btn-full" style="margin-top:0.5rem">Create Account</a>
         </div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
+          <a href="{{ url_for('demo_login', role='admin') }}" class="btn btn-secondary btn-full">Demo Admin</a>
+          <a href="{{ url_for('demo_login', role='user') }}" class="btn btn-secondary btn-full">Demo User</a>
+        </div>
       </div>
     </div>
 

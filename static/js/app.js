@@ -994,10 +994,9 @@
   onId("generatePwBtn", "click", function () { document.getElementById("newPassword").value = generatePassword(16); });
   onId("togglePasswordsBtn", "click", function () {
     var btn = document.getElementById("togglePasswordsBtn");
-    var showAll = btn.dataset.showall !== "1";
-    btn.dataset.showall = showAll ? "1" : "0";
-    btn.textContent = showAll ? "Hide All" : "Show All";
-    document.querySelectorAll("#userList .user-password-input").forEach(function (inp) { inp.type = showAll ? "text" : "password"; });
+    var show = btn.textContent === "Show Passwords";
+    btn.textContent = show ? "Hide Passwords" : "Show Passwords";
+    document.querySelectorAll("#userList .user-password-input").forEach(function (inp) { inp.type = show ? "text" : "password"; });
   });
   onId("uploadsBtn", "click", function () { openDialog(document.getElementById("uploadsModalOverlay")); loadUploadsModal(); loadCleanupStatus(); var isIT = currentUser === "IT"; document.getElementById("logsDivider").classList.toggle("hidden", !isIT); document.getElementById("logsTitle").classList.toggle("hidden", !isIT); document.getElementById("logsViewer").classList.toggle("hidden", !isIT); if (isIT) loadLogs(); });
   onId("closeUploadsModal", "click", function () { closeDialog(document.getElementById("uploadsModalOverlay")); });

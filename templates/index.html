@@ -216,7 +216,6 @@
           <div class="dialog-header">
             <h2 class="dialog-title">Manage Users</h2>
             <div style="display:flex;align-items:center;gap:0.5rem">
-              <button class="btn btn-outline btn-sm" id="togglePasswordsBtn">Show All</button>
               <button class="dialog-close" id="closeUserModal" title="Close">&times;</button>
             </div>
           </div>
@@ -233,8 +232,9 @@
             </div>
           </div>
           <div class="separator"></div>
-          <div style="margin-bottom:0.5rem">
+          <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
             <input class="input" id="usersSearch" type="text" placeholder="Search by username..." style="max-width:20rem" />
+            <button class="btn btn-outline btn-sm" id="togglePasswordsBtn">Show Passwords</button>
           </div>
           <div class="user-list" id="userList"></div>
         </div>
