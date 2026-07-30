@@ -1,0 +1,11 @@
+{
+  "tea": {
+    "total_bills": {
+      "October": 66.0,
+      "April": 999.0,
+      "November": 9.0,
+      "March": 513.3
+    },
+    "profile_pic": true
+  }
+}

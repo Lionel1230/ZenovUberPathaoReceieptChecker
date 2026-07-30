@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
+import flask
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
@@ -56,6 +57,7 @@ DELETE_TIME_LIMIT = 7200  # 2 hours in seconds
 CLEANUP_DAYS = 90
 
 app = Flask(__name__)
+app.jinja_env.auto_reload = True
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE * MAX_FILES
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 
@@ -188,11 +190,185 @@ def logout():
     return redirect(url_for("login"))
 
 
+USER_META_FILE = BASE_DIR / "user_meta.json"
+
+def _load_user_meta() -> dict:
+    if USER_META_FILE.exists():
+        try:
+            return json.loads(USER_META_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+def _save_user_meta(meta: dict) -> None:
+    USER_META_FILE.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
 @app.route("/api/me")
 @login_required
 def get_me():
     username = session.get("username", "")
-    return jsonify({"username": username, "is_admin": username in ADMIN_ROLES})
+    meta = _load_user_meta()
+    info = meta.get(username, {})
+    return jsonify({
+        "username": username,
+        "is_admin": username in ADMIN_ROLES,
+        "name": info.get("name", username),
+        "team": info.get("team", ""),
+        "role": info.get("role", ""),
+        "profile_pic": info.get("profile_pic", False),
+    })
+
+
+PROFILE_PIC_DIR = BASE_DIR / "profile_pics"
+PROFILE_PIC_DIR.mkdir(exist_ok=True)
+
+_default_avatar = PROFILE_PIC_DIR / "_default.svg"
+if not _default_avatar.exists():
+    _default_avatar.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80">'
+        '<circle cx="40" cy="40" r="40" fill="hsl(220 14% 80%)"/>'
+        '<text x="40" y="46" text-anchor="middle" fill="hsl(220 14% 40%)" font-size="28" font-family="sans-serif" font-weight="600">?</text>'
+        '</svg>',
+        encoding="utf-8",
+    )
+
+
+@app.route("/api/profile-pic/<username>", methods=["GET"])
+def get_profile_pic(username: str):
+    if username == "default":
+        return flask.send_file(str(_default_avatar), mimetype="image/svg+xml")
+    for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"):
+        pic = PROFILE_PIC_DIR / f"{username}{ext}"
+        if pic.exists():
+            mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml"}
+            return flask.send_file(str(pic), mimetype=mime.get(ext[1:], "image/png"))
+    return flask.send_file(str(_default_avatar), mimetype="image/svg+xml")
+
+
+@app.route("/api/profile-pic", methods=["PUT"])
+@login_required
+def upload_profile_pic():
+    username = session.get("username", "")
+    if "profile_pic" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    file = request.files["profile_pic"]
+    if not file.filename:
+        return jsonify({"error": "No file selected"}), 400
+    ext = Path(file.filename).suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+        return jsonify({"error": "Invalid image format"}), 400
+    dest = PROFILE_PIC_DIR / f"{username}{ext}"
+    for old_ext in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+        old = PROFILE_PIC_DIR / f"{username}{old_ext}"
+        if old.exists() and old.name != dest.name:
+            old.unlink()
+    file.save(str(dest))
+    meta = _load_user_meta()
+    if username not in meta:
+        meta[username] = {}
+    meta[username]["profile_pic"] = True
+    _save_user_meta(meta)
+    logger.info("Profile pic updated for '%s'", username)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/billing", methods=["GET"])
+@login_required
+def get_billing():
+    username = session.get("username", "")
+    if username in ADMIN_ROLES:
+        return jsonify({"entries": [], "total_bills": {}})
+    user_dir = UPLOAD_ROOT / "submissions" / username
+    entries = []
+    meta = _load_user_meta()
+    user_meta = meta.get(username, {})
+    total_bills = user_meta.get("total_bills", {})
+    if user_dir.exists():
+        for month_dir in sorted(user_dir.iterdir()):
+            if not month_dir.is_dir() or month_dir.name not in VALID_MONTHS:
+                continue
+            month_name = month_dir.name
+            for verdict_folder in ("Real", "Fake"):
+                folder = month_dir / verdict_folder
+                if not folder.exists():
+                    continue
+                for f in sorted(folder.iterdir()):
+                    if f.is_file() and f.suffix.lower() == ".pdf":
+                        entries.append({
+                            "month": month_name,
+                            "filename": f.name,
+                            "folder": verdict_folder,
+                        })
+    month_file_counts: dict[str, int] = {}
+    for e in entries:
+        month_file_counts[e["month"]] = month_file_counts.get(e["month"], 0) + 1
+    for e in entries:
+        m = e["month"]
+        bill = total_bills.get(m, 0)
+        count = month_file_counts.get(m, 1)
+        e["amount"] = round(bill / count, 2) if bill > 0 and count > 0 else 0
+    return jsonify({"entries": entries, "total_bills": total_bills})
+
+
+@app.route("/api/billing/total", methods=["PUT"])
+@login_required
+def set_total_bill():
+    username = session.get("username", "")
+    if username in ADMIN_ROLES:
+        return jsonify({"error": "Admins cannot set billing"}), 403
+    data = request.get_json(silent=True) or {}
+    month = (data.get("month") or "").strip()
+    if month not in VALID_MONTHS:
+        return jsonify({"error": "Invalid month"}), 400
+    total = data.get("total_bill", 0)
+    try:
+        total = float(total)
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid amount"}), 400
+    if total < 0:
+        return jsonify({"error": "Amount cannot be negative"}), 400
+    meta = _load_user_meta()
+    if username not in meta:
+        meta[username] = {}
+    if "total_bills" not in meta[username]:
+        meta[username]["total_bills"] = {}
+    meta[username]["total_bills"][month] = total
+    _save_user_meta(meta)
+    logger.info("Total bill set to %.2f for '%s' month %s", total, username, month)
+    return jsonify({"ok": True, "total_bill": total, "month": month})
+
+
+@app.route("/api/admin/verify", methods=["POST"])
+@login_required
+def toggle_verification():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "")
+    month = data.get("month", "")
+    filename = data.get("filename", "")
+    if not username or not month or not filename:
+        return jsonify({"error": "Missing fields"}), 400
+    safe = secure_filename(filename)
+    meta = _load_user_meta()
+    if username not in meta:
+        meta[username] = {}
+    verif_key = f"verified_{month}_{safe}"
+    current = meta[username].get("verification", {})
+    v = current.get(verif_key, None)
+    if v is None:
+        current[verif_key] = True
+    elif v is True:
+        current[verif_key] = False
+    else:
+        current[verif_key] = None
+    meta[username]["verification"] = current
+    _save_user_meta(meta)
+    new_val = current[verif_key]
+    label = "verified" if new_val is True else ("malicious" if new_val is False else "unverified")
+    logger.info("Verification toggled for '%s/%s/%s' -> %s by '%s'", username, month, safe, label, session.get("username"))
+    return jsonify({"message": f"Marked as {label}", "verified": new_val})
 
 
 def _save_user(username: str, password: str) -> None:
@@ -481,12 +657,22 @@ def too_large(_exc):
     return jsonify({"error": "Upload too large"}), 413
 
 
+VALID_MONTHS = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+]
+
+
 @app.route("/api/submit", methods=["POST"])
 @login_required
 def submit_files():
     username = session.get("username", "")
     if username in ADMIN_ROLES:
         return jsonify({"error": "Admins cannot submit files this way"}), 403
+
+    month = request.form.get("month", "").strip()
+    if month not in VALID_MONTHS:
+        return jsonify({"error": "Please select a valid month"}), 400
 
     files = request.files.getlist("files")
     if not files or all(f.filename == "" for f in files):
@@ -516,7 +702,7 @@ def submit_files():
         names = ", ".join(oversized[:5])
         return jsonify({"error": f"Files too large (max {MAX_FILE_SIZE // (1024*1024)} MB): {names}"}), 400
 
-    user_dir = UPLOAD_ROOT / "submissions" / username
+    user_dir = UPLOAD_ROOT / "submissions" / username / month
     real_dir = user_dir / "Real"
     fake_dir = user_dir / "Fake"
     real_dir.mkdir(parents=True, exist_ok=True)
@@ -620,34 +806,42 @@ def my_submissions():
 
     now = time.time()
     files = []
-    for verdict_folder in ("Real", "Fake"):
-        folder = user_dir / verdict_folder
-        if not folder.exists():
+    for month_name in sorted(user_dir.iterdir()):
+        if not month_name.is_dir() or month_name.name not in VALID_MONTHS:
             continue
-        for f in sorted(folder.iterdir()):
-            if f.is_file() and f.suffix.lower() == ".pdf":
-                mtime = f.stat().st_mtime
-                age = now - mtime
-                files.append({
-                    "name": f.name,
-                    "size": f.stat().st_size,
-                    "uploaded": mtime,
-                    "can_delete": age < DELETE_TIME_LIMIT,
-                    "remaining": max(0, int(DELETE_TIME_LIMIT - age)),
-                })
+        for verdict_folder in ("Real", "Fake"):
+            folder = month_name / verdict_folder
+            if not folder.exists():
+                continue
+            for f in sorted(folder.iterdir()):
+                if f.is_file() and f.suffix.lower() == ".pdf":
+                    mtime = f.stat().st_mtime
+                    age = now - mtime
+                    files.append({
+                        "name": f.name,
+                        "size": f.stat().st_size,
+                        "uploaded": mtime,
+                        "can_delete": age < DELETE_TIME_LIMIT,
+                        "remaining": max(0, int(DELETE_TIME_LIMIT - age)),
+                        "month": month_name.name,
+                    })
 
+    month_order = {m: i for i, m in enumerate(VALID_MONTHS)}
+    files.sort(key=lambda x: (month_order.get(x["month"], 99), x["name"]))
     return jsonify({"files": files})
 
 
-@app.route("/api/my-submissions/<filename>", methods=["DELETE"])
+@app.route("/api/my-submissions/<month>/<filename>", methods=["DELETE"])
 @login_required
-def delete_my_submission(filename: str):
+def delete_my_submission(month: str, filename: str):
     username = session.get("username", "")
     if username in ADMIN_ROLES:
         return jsonify({"error": "Admins cannot delete this way"}), 403
+    if month not in VALID_MONTHS:
+        return jsonify({"error": "Invalid month"}), 400
 
     safe = secure_filename(filename)
-    user_dir = UPLOAD_ROOT / "submissions" / username
+    user_dir = UPLOAD_ROOT / "submissions" / username / month
     file_path = None
     for folder in ("Real", "Fake"):
         candidate = user_dir / folder / safe
@@ -662,7 +856,7 @@ def delete_my_submission(filename: str):
         return jsonify({"error": "Cannot delete after 2 hours"}), 403
 
     file_path.unlink()
-    logger.info("User '%s' deleted '%s'", username, safe)
+    logger.info("User '%s' deleted '%s' from %s", username, safe, month)
     return jsonify({"message": f"Deleted {safe}"})
 
 
@@ -676,17 +870,22 @@ def admin_uploads():
     users = _load_users()
     normal_users = {u for u in users if u not in ADMIN_ROLES}
 
+    month_order = {m: i for i, m in enumerate(VALID_MONTHS)}
+
     uploaded = {}
     if submissions_dir.exists():
         for user_dir in submissions_dir.iterdir():
             if user_dir.is_dir() and user_dir.name in normal_users:
                 files = []
-                for verdict_folder in ("Real", "Fake"):
-                    folder = user_dir / verdict_folder
-                    if folder.exists():
-                        for f in sorted(folder.iterdir()):
-                            if f.is_file() and f.suffix.lower() == ".pdf":
-                                files.append((verdict_folder, f.name))
+                for month_dir in sorted(user_dir.iterdir(), key=lambda d: month_order.get(d.name, 99)):
+                    if not month_dir.is_dir() or month_dir.name not in VALID_MONTHS:
+                        continue
+                    for verdict_folder in ("Real", "Fake"):
+                        folder = month_dir / verdict_folder
+                        if folder.exists():
+                            for f in sorted(folder.iterdir()):
+                                if f.is_file() and f.suffix.lower() == ".pdf":
+                                    files.append((verdict_folder, month_dir.name, f.name))
                 uploaded[user_dir.name] = files
 
     result = []
@@ -695,28 +894,44 @@ def admin_uploads():
     all_user_results: dict[str, dict] = {}
     for username in sorted(normal_users):
         user_dir = submissions_dir / username
-        results_path = user_dir / "_results.json"
-        results = {}
-        if results_path.exists():
+        if not user_dir.exists():
+            continue
+        for month_dir in user_dir.iterdir():
+            if not month_dir.is_dir() or month_dir.name not in VALID_MONTHS:
+                continue
+            results_path = month_dir / "_results.json"
+            if not results_path.exists():
+                continue
             try:
                 results = json.loads(results_path.read_text(encoding="utf-8"))
             except Exception:
-                pass
-        all_user_results[username] = results
-        for fname, info in results.items():
-            sha1 = info.get("sha1", "")
-            if sha1:
-                key = f"{username}/{fname}"
-                sha1_to_files.setdefault(sha1, []).append(key)
+                continue
+            for fname, info in results.items():
+                sha1 = info.get("sha1", "")
+                if sha1:
+                    key = f"{username}/{month_dir.name}/{fname}"
+                    sha1_to_files.setdefault(sha1, []).append(key)
 
     for username in sorted(normal_users):
         files = uploaded.get(username, [])
-        results = all_user_results.get(username, {})
         file_data = []
-        for folder, fname in files:
+        for folder, month_name, fname in files:
+            month_dir = submissions_dir / username / month_name
+            results_path = month_dir / "_results.json"
+            results = {}
+            if results_path.exists():
+                try:
+                    results = json.loads(results_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
             info = results.get(fname, {})
             sha1 = info.get("sha1", "")
             is_duplicate = len(sha1_to_files.get(sha1, [])) > 1 if sha1 else False
+            user_meta_all = _load_user_meta()
+            umeta = user_meta_all.get(username, {})
+            verif_map = umeta.get("verification", {})
+            verif_key = f"verified_{month_name}_{fname}"
+            verified_val = verif_map.get(verif_key)
             file_data.append({
                 "name": fname,
                 "verdict": info.get("verdict", ""),
@@ -724,20 +939,24 @@ def admin_uploads():
                 "creator": info.get("creator", ""),
                 "folder": folder,
                 "duplicate": is_duplicate,
+                "month": month_name,
+                "verified": verified_val,
             })
         result.append({"username": username, "files": file_data, "count": len(files)})
 
     return jsonify({"users": result})
 
 
-@app.route("/api/admin/uploads/<username>/<filename>", methods=["DELETE"])
+@app.route("/api/admin/uploads/<username>/<month>/<filename>", methods=["DELETE"])
 @login_required
-def admin_delete_upload(username: str, filename: str):
+def admin_delete_upload(username: str, month: str, filename: str):
     if session.get("username") not in ADMIN_ROLES:
         return jsonify({"error": "Forbidden"}), 403
+    if month not in VALID_MONTHS:
+        return jsonify({"error": "Invalid month"}), 400
 
     safe = secure_filename(filename)
-    user_dir = UPLOAD_ROOT / "submissions" / username
+    user_dir = UPLOAD_ROOT / "submissions" / username / month
     file_path = None
     for folder in ("Real", "Fake"):
         candidate = user_dir / folder / safe
@@ -748,7 +967,7 @@ def admin_delete_upload(username: str, filename: str):
         return jsonify({"error": "File not found"}), 404
 
     file_path.unlink()
-    logger.info("Admin deleted '%s/%s'", username, safe)
+    logger.info("Admin deleted '%s/%s/%s'", username, month, safe)
     return jsonify({"message": f"Deleted {safe}"})
 
 
@@ -834,33 +1053,32 @@ def run_cleanup():
     if session.get("username") not in ADMIN_ROLES:
         return jsonify({"error": "Forbidden"}), 403
 
-    cutoff = datetime.now() - timedelta(days=CLEANUP_DAYS)
-    cutoff_ts = cutoff.timestamp()
-    deleted = 0
-
     submissions_dir = UPLOAD_ROOT / "submissions"
+    errors = []
     if submissions_dir.exists():
-        for user_dir in submissions_dir.iterdir():
-            if user_dir.is_dir():
-                for verdict_folder in ("Real", "Fake"):
-                    folder = user_dir / verdict_folder
-                    if not folder.exists():
-                        continue
-                    for f in folder.iterdir():
-                        if f.is_file() and f.suffix.lower() == ".pdf" and f.stat().st_mtime < cutoff_ts:
-                            f.unlink()
-                            deleted += 1
-                            logger.info("Cleanup: deleted '%s/%s/%s'", user_dir.name, verdict_folder, f.name)
+        for item in submissions_dir.rglob("*"):
+            if item.is_file():
+                try:
+                    item.chmod(0o777)
+                    item.unlink()
+                except Exception as e:
+                    errors.append(str(item.name))
+        for item in list(submissions_dir.rglob("*"))[::-1]:
+            if item.is_dir():
+                try:
+                    item.rmdir()
+                except Exception:
+                    pass
+        if not errors:
+            try:
+                submissions_dir.rmdir()
+            except Exception:
+                pass
+        logger.info("Cleanup by '%s' — %d errors", session.get("username"), len(errors))
 
-    admin_dir = UPLOAD_ROOT
-    for f in admin_dir.iterdir():
-        if f.is_file() and f.suffix.lower() == ".pdf" and f.stat().st_mtime < cutoff_ts:
-            f.unlink()
-            deleted += 1
-            logger.info("Cleanup: deleted '%s'", f.name)
-
-    logger.info("Cleanup completed by '%s' — %d files deleted (older than %d days)", session.get("username"), deleted, CLEANUP_DAYS)
-    return jsonify({"deleted": deleted, "days": CLEANUP_DAYS})
+    if errors:
+        return jsonify({"error": f"Could not delete {len(errors)} file(s): {', '.join(errors[:5])}"}), 500
+    return jsonify({"deleted": 0})
 
 
 @app.route("/api/logs", methods=["GET"])

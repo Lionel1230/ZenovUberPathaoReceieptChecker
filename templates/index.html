@@ -16,8 +16,10 @@
         <span class="badge badge-default">BETA</span>
       </div>
       <div class="header-actions">
-        <p class="text-sm text-muted hidden" id="headerSubtitle" style="margin:0">Detect real vs modified PDFs by inspecting metadata</p>
-        <p class="header-warning hidden" id="headerWarning">Do not upload modified PDF files. You must take all responsibility of your uploaded files.</p>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:0.25rem;width:100%">
+          <p class="text-sm text-muted hidden" id="headerSubtitle" style="margin:0;text-align:center">Detect real vs modified PDFs by inspecting metadata</p>
+          <p class="header-warning hidden" id="headerWarning" style="margin:0;text-align:center">Do not upload modified PDF files. You must take all responsibility of your uploaded files.</p>
+        </div>
         <button class="btn btn-ghost btn-sm hidden" id="manageUsersBtn">Manage Users</button>
         <button class="btn btn-ghost btn-sm hidden" id="uploadsBtn">Uploads</button>
         <button class="btn btn-ghost btn-sm hidden" id="regRequestsBtn">Requests</button>
@@ -31,94 +33,236 @@
     </div>
 
     <main class="main">
-      <section class="card" id="uploadSection">
-        <div class="card-content">
-          <div class="drop-zone" id="dropZone">
-            <svg class="drop-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M12 16V4m0 0L7 9m5-5 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M20 16.5v1.5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-            <p class="drop-text">Drag &amp; drop PDFs here</p>
-            <p class="drop-hint">or use the buttons below</p>
-          </div>
+      <!-- Profile Section -->
+      <div class="profile-section hidden" id="profileSection">
+        <div class="profile-pic-input" id="profilePicUpload">
+          <img id="profilePicImg" src="" alt="Profile" />
+          <div class="overlay">Change</div>
+          <input type="file" id="profilePicInput" accept="image/*" hidden />
+        </div>
+        <div class="profile-info">
+          <div class="profile-name" id="profileName"></div>
+          <div class="profile-role" id="profileRole"></div>
+          <div class="profile-team" id="profileTeam"></div>
+        </div>
+      </div>
 
-          <div class="button-row">
-            <label class="btn btn-default" for="fileInput">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <!-- User Tabs (Normal Users) -->
+      <div class="tabs hidden" id="userTabs" role="tablist">
+        <button class="tabs-trigger active" data-tab="check" role="tab">Upload PDF</button>
+        <button class="tabs-trigger" data-tab="billing" role="tab">Billing</button>
+        <button class="tabs-trigger" data-tab="submitted" role="tab">Submitted</button>
+      </div>
+
+      <!-- Check Tab -->
+      <div class="tab-panel" id="tab-check">
+        <section class="card" id="uploadSection">
+          <div class="card-content">
+            <div class="drop-zone" id="dropZone">
+              <svg class="drop-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 16V4m0 0L7 9m5-5 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M20 16.5v1.5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
               </svg>
-              Upload PDF
-            </label>
-            <input type="file" id="fileInput" accept=".pdf,application/pdf" multiple hidden />
-
-            <label class="btn btn-secondary" for="folderInput">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.5"/>
-              </svg>
-              Upload Folder
-            </label>
-            <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
-          </div>
-        </div>
-      </section>
-
-      <section class="card hidden staging-section" id="stagingSection">
-        <div class="card-content">
-          <h2 class="h2" style="margin-bottom:1rem">Selected Files</h2>
-          <div class="staging-list" id="stagingList"></div>
-          <div class="staging-actions">
-            <button class="btn btn-ghost btn-sm" id="clearStagingBtn">Clear All</button>
-            <button class="btn btn-default" id="submitFilesBtn">Submit</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="card hidden" id="mySubmissions">
-        <div class="card-content">
-          <div class="my-submissions-header">
-            <h2 class="h2" style="margin-bottom:0">My Submissions</h2>
-            <button class="btn btn-outline btn-sm" id="refreshMySubmissionsBtn">Refresh</button>
-          </div>
-          <div id="mySubmissionsList"></div>
-        </div>
-      </section>
-
-      <section class="card hidden" id="progressSection">
-        <div class="card-content">
-          <h2 class="h2" style="margin-bottom:1rem">Progress</h2>
-
-          <div class="progress-block">
-            <div class="progress-header">
-              <span>Uploading</span>
-              <span id="uploadPct">0%</span>
+              <p class="drop-text">Drag &amp; drop PDFs here</p>
+              <p class="drop-hint">or use the buttons below</p>
             </div>
-            <div class="progress-track">
-              <div class="progress-fill progress-fill-default" id="uploadBar"></div>
+
+            <div class="button-row">
+              <label class="btn btn-default" for="fileInput">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                Upload PDF
+              </label>
+              <input type="file" id="fileInput" accept=".pdf,application/pdf" multiple hidden />
+
+              <label class="btn btn-secondary" for="folderInput">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.5"/>
+                </svg>
+                Upload Folder
+              </label>
+              <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
+            </div>
+
+          </div>
+        </section>
+
+        <section class="card hidden staging-section" id="stagingSection">
+          <div class="card-content">
+            <h2 class="h2" style="margin-bottom:1rem">Selected Files</h2>
+            <div class="staging-month-row">
+              <label class="label" for="monthSelect" style="margin-bottom:0">Month</label>
+              <select class="input" id="monthSelect" style="max-width:10rem">
+                <option value="">— Select Month —</option>
+                <option value="January">January</option>
+                <option value="February">February</option>
+                <option value="March">March</option>
+                <option value="April">April</option>
+                <option value="May">May</option>
+                <option value="June">June</option>
+                <option value="July">July</option>
+                <option value="August">August</option>
+                <option value="September">September</option>
+                <option value="October">October</option>
+                <option value="November">November</option>
+                <option value="December">December</option>
+              </select>
+              <span class="total-bill-label" style="margin-left:auto">৳</span>
+              <input class="input" type="number" id="monthBillInput" placeholder="Total bill for this month" min="0" step="0.01" style="max-width:10rem" />
+              <button class="btn btn-default btn-sm" id="setMonthBillBtn">Set</button>
+            </div>
+            <div class="staging-list" id="stagingList"></div>
+            <div class="staging-actions">
+              <button class="btn btn-ghost btn-sm" id="clearStagingBtn">Clear All</button>
+              <button class="btn btn-default" id="submitFilesBtn">Submit</button>
             </div>
           </div>
+        </section>
 
-          <div class="progress-block">
-            <div class="progress-header">
-              <span>Analyzing</span>
-              <span id="analyzePct">0%</span>
+        <section class="card hidden" id="progressSection">
+          <div class="card-content">
+            <h2 class="h2" style="margin-bottom:1rem">Progress</h2>
+
+            <div class="progress-block">
+              <div class="progress-header">
+                <span>Uploading</span>
+                <span id="uploadPct">0%</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill progress-fill-default" id="uploadBar"></div>
+              </div>
             </div>
-            <div class="progress-track">
-              <div class="progress-fill progress-fill-cyan" id="analyzeBar"></div>
+
+            <div class="progress-block">
+              <div class="progress-header">
+                <span>Analyzing</span>
+                <span id="analyzePct">0%</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill progress-fill-cyan" id="analyzeBar"></div>
+              </div>
+              <p class="progress-detail" id="analyzeDetail"></p>
             </div>
-            <p class="progress-detail" id="analyzeDetail"></p>
+          </div>
+        </section>
+
+        <section class="card hidden" id="resultsSection">
+          <div class="card-content">
+            <div class="results-header">
+              <h2 class="h2" style="margin-bottom:0">Results</h2>
+              <div class="summary-badges" id="summaryBadges"></div>
+            </div>
+            <div class="results-grid" id="resultsGrid"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Billing Tab -->
+      <div class="tab-panel hidden" id="tab-billing">
+        <section class="card">
+          <div class="card-content">
+            <h2 class="h2" style="margin-bottom:1rem">Billing Entries</h2>
+            <div class="billing-entries">
+              <div class="bill-list" id="billList"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Submitted Tab -->
+      <div class="tab-panel hidden" id="tab-submitted">
+        <section class="card">
+          <div class="card-content">
+            <div class="my-submissions-header">
+              <h2 class="h2" style="margin-bottom:0">My Submissions</h2>
+              <button class="btn btn-outline btn-sm" id="refreshMySubmissionsBtn">Refresh</button>
+            </div>
+            <div id="mySubmissionsList"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Uploads Modal -->
+      <div class="dialog-overlay hidden" id="uploadsModalOverlay">
+        <div class="dialog-content" id="uploadsModal" style="max-width:680px">
+          <div class="dialog-header">
+            <h2 class="dialog-title">User Submissions</h2>
+            <button class="dialog-close" id="closeUploadsModal" title="Close">&times;</button>
+          </div>
+          <div class="cleanup-bar">
+            <div class="cleanup-toggle-row">
+              <span class="cleanup-label">Auto-delete PDFs older than 90 days</span>
+              <label class="switch">
+                <input type="checkbox" id="cleanupToggle" />
+                <div class="switch-track"><div class="switch-thumb"></div></div>
+              </label>
+            </div>
+            <button class="btn btn-outline btn-sm" id="runCleanupBtn">Run Cleanup Now</button>
+          </div>
+          <div id="uploadsModalList"></div>
+          <div class="separator hidden" id="logsDivider"></div>
+          <h3 class="h3 hidden" style="margin-bottom:0.75rem" id="logsTitle">Recent Logs</h3>
+          <div class="logs-viewer hidden" id="logsViewer">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Manage Users Modal -->
+      <div class="dialog-overlay hidden" id="userModalOverlay">
+        <div class="dialog-content" id="userModal">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Manage Users</h2>
+            <div style="display:flex;align-items:center;gap:0.5rem">
+              <button class="btn btn-outline btn-sm" id="togglePasswordsBtn">Show Passwords</button>
+              <button class="dialog-close" id="closeUserModal" title="Close">&times;</button>
+            </div>
+          </div>
+          <div class="user-list" id="userList"></div>
+          <div class="separator"></div>
+          <h3 class="h3" style="margin-bottom:0.75rem">Add New User</h3>
+          <div class="alert alert-error hidden" id="userModalError"></div>
+          <div class="create-user-form">
+            <input class="input" type="text" id="newUsername" placeholder="Username" autocomplete="off" />
+            <div class="password-row">
+              <input class="input" type="text" id="newPassword" placeholder="Password" autocomplete="off" />
+              <button class="btn btn-secondary btn-sm" id="generatePwBtn" title="Auto-generate password">Generate</button>
+            </div>
+            <button class="btn btn-default" id="createUserBtn">Create User</button>
           </div>
         </div>
-      </section>
+      </div>
 
-      <section class="card hidden" id="resultsSection">
-        <div class="card-content">
-          <div class="results-header">
-            <h2 class="h2" style="margin-bottom:0">Results</h2>
-            <div class="summary-badges" id="summaryBadges"></div>
+      <!-- Registration Requests Modal -->
+      <div class="dialog-overlay hidden" id="regRequestsOverlay">
+        <div class="dialog-content" id="regRequestsModal" style="max-width:520px">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Registration Requests</h2>
+            <button class="dialog-close" id="closeRegRequests" title="Close">&times;</button>
           </div>
-          <div class="results-grid" id="resultsGrid"></div>
+          <div id="regRequestsList"></div>
         </div>
-      </section>
+      </div>
+
+      <!-- Site Settings Modal -->
+      <div class="dialog-overlay hidden" id="siteSettingsOverlay">
+        <div class="dialog-content" id="siteSettingsModal">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Site Settings</h2>
+            <button class="dialog-close" id="closeSiteSettings" title="Close">&times;</button>
+          </div>
+          <div class="settings-group">
+            <label class="label" for="dailyQuoteInput">Daily Quote</label>
+            <textarea class="textarea" id="dailyQuoteInput" rows="3" placeholder="Enter a daily quote..."></textarea>
+          </div>
+          <div class="settings-group">
+            <label class="label" for="maintenanceInput">Maintenance Message</label>
+            <textarea class="textarea" id="maintenanceInput" rows="2" placeholder="e.g. Website will be up in 24H"></textarea>
+            <p class="settings-hint">Leave empty to hide the maintenance banner.</p>
+          </div>
+          <button class="btn btn-default" id="saveSiteSettingsBtn">Save Settings</button>
+          <div class="alert hidden" id="siteSettingsAlert" style="margin-top:0.75rem"></div>
+        </div>
+      </div>
 
     </main>
 
@@ -128,91 +272,10 @@
       <p class="daily-quote" id="dailyQuote"></p>
       <p class="credit">Designed by <strong class="credit-name">Julker Naine Jakaria</strong></p>
     </footer>
-  </div>
 
-  <div class="dialog-overlay hidden" id="userModalOverlay">
-    <div class="dialog-content" id="userModal">
-      <div class="dialog-header">
-        <h2 class="dialog-title">Manage Users</h2>
-        <div class="modal-header-actions" style="display:flex;align-items:center;gap:0.5rem">
-          <button class="btn btn-outline btn-sm" id="togglePasswordsBtn">Show Passwords</button>
-          <button class="dialog-close" id="closeUserModal" title="Close">✕</button>
-        </div>
-      </div>
-
-      <div class="user-list" id="userList"></div>
-
-      <div class="separator"></div>
-
-      <h3 class="h3" style="margin-bottom:0.75rem">Add New User</h3>
-      <div class="alert alert-error hidden" id="userModalError"></div>
-      <div class="create-user-form">
-        <input class="input" type="text" id="newUsername" placeholder="Username" autocomplete="off" />
-        <div class="password-row">
-          <input class="input" type="text" id="newPassword" placeholder="Password" autocomplete="off" />
-          <button class="btn btn-secondary btn-sm" id="generatePwBtn" title="Auto-generate password">Generate</button>
-        </div>
-        <button class="btn btn-default" id="createUserBtn">Create User</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="dialog-overlay hidden" id="uploadsModalOverlay">
-    <div class="dialog-content" id="uploadsModal" style="max-width:680px">
-      <div class="dialog-header">
-        <h2 class="dialog-title">User Submissions</h2>
-        <button class="dialog-close" id="closeUploadsModal" title="Close">✕</button>
-      </div>
-
-      <div class="cleanup-bar">
-        <div class="cleanup-toggle-row">
-          <span class="cleanup-label">Auto-delete PDFs older than 90 days</span>
-          <label class="switch">
-            <input type="checkbox" id="cleanupToggle" />
-            <div class="switch-track"><div class="switch-thumb"></div></div>
-          </label>
-        </div>
-        <button class="btn btn-outline btn-sm" id="runCleanupBtn">Run Cleanup Now</button>
-      </div>
-
-      <div id="uploadsModalList"></div>
-
-      <div class="separator hidden" id="logsDivider"></div>
-      <h3 class="h3 hidden" style="margin-bottom:0.75rem" id="logsTitle">Recent Logs</h3>
-      <div class="logs-viewer hidden" id="logsViewer">Loading...</div>
-    </div>
-  </div>
-
-  <div class="dialog-overlay hidden" id="siteSettingsOverlay">
-    <div class="dialog-content" id="siteSettingsModal">
-      <div class="dialog-header">
-        <h2 class="dialog-title">Site Settings</h2>
-        <button class="dialog-close" id="closeSiteSettings" title="Close">✕</button>
-      </div>
-
-      <div class="settings-group">
-        <label class="label" for="dailyQuoteInput">Daily Quote</label>
-        <textarea class="textarea" id="dailyQuoteInput" rows="3" placeholder="Enter a daily quote..."></textarea>
-      </div>
-
-      <div class="settings-group">
-        <label class="label" for="maintenanceInput">Maintenance Message</label>
-        <textarea class="textarea" id="maintenanceInput" rows="2" placeholder="e.g. Website will be up in 24H"></textarea>
-        <p class="settings-hint">Leave empty to hide the maintenance banner.</p>
-      </div>
-
-      <button class="btn btn-default" id="saveSiteSettingsBtn">Save Settings</button>
-      <div class="alert hidden" id="siteSettingsAlert" style="margin-top:0.75rem"></div>
-    </div>
-  </div>
-
-  <div class="dialog-overlay hidden" id="regRequestsOverlay">
-    <div class="dialog-content" id="regRequestsModal" style="max-width:520px">
-      <div class="dialog-header">
-        <h2 class="dialog-title">Registration Requests</h2>
-        <button class="dialog-close" id="closeRegRequests" title="Close">✕</button>
-      </div>
-      <div id="regRequestsList"></div>
+    <div class="spinner-overlay hidden" id="globalSpinner">
+      <div class="spinner spinner-lg"></div>
+      <span id="globalSpinnerText" style="font-size:0.875rem;color:hsl(var(--muted-fg))">Loading...</span>
     </div>
   </div>
 

@@ -22,7 +22,24 @@
   let currentUser = window.__CURRENT_USER || "";
   let isAdmin = ["root", "admin", "IT"].includes(currentUser);
   let stagedFiles = [];
-  let focusedBeforeDialog = null;
+  let showPasswords = false;
+  let userData = {};
+  console.log("DEBUG currentUser:", JSON.stringify(currentUser), "isAdmin:", isAdmin);
+
+  async function initUI() {
+    await loadSiteConfig();
+  }
+
+  function applyUI() {
+    updateAdminUI();
+    loadProfile();
+    loadMySubmissions();
+    loadBillList();
+    if (isAdmin) {
+      loadUploadsAdminList();
+      loadCleanupStatus();
+    }
+  }
 
   if (!currentUser) {
     fetch("/api/me")
@@ -30,9 +47,23 @@
       .then((data) => {
         currentUser = data.username;
         isAdmin = data.is_admin;
-        updateAdminUI();
+        applyUI();
+        initUI();
       })
       .catch(() => {});
+  } else {
+    applyUI();
+    initUI();
+  }
+
+  /* ─── global spinner ─── */
+  function showGlobalSpinner(text) {
+    var el = document.getElementById("globalSpinner");
+    document.getElementById("globalSpinnerText").textContent = text || "Loading...";
+    el.classList.remove("hidden");
+  }
+  function hideGlobalSpinner() {
+    document.getElementById("globalSpinner").classList.add("hidden");
   }
 
   /* ─── loading state ─── */
@@ -69,18 +100,65 @@
     el.addEventListener("animationend", function () { el.remove(); });
   }
 
-  /* ─── dialog helpers ─── */
-  var dialogs = [];
+  /* ─── UI toggle: User vs Admin ─── */
+  function updateAdminUI() {
+    var isAdm = isAdmin;
+    var sub = document.getElementById("headerSubtitle");
+    var warn = document.getElementById("headerWarning");
+    if (sub) sub.classList.toggle("hidden", !isAdm);
+    if (warn) warn.classList.toggle("hidden", isAdm);
 
+    var profile = document.getElementById("profileSection");
+    var userTabs = document.getElementById("userTabs");
+    var adminTabs = document.getElementById("adminTabs");
+
+    if (isAdm) {
+      if (profile) profile.classList.add("hidden");
+      if (userTabs) userTabs.classList.add("hidden");
+      document.getElementById("tab-billing").classList.add("hidden");
+      document.getElementById("tab-submitted").classList.add("hidden");
+      document.getElementById("tab-check").classList.remove("hidden");
+      document.getElementById("stagingSection").classList.add("hidden");
+      if (adminTabs) adminTabs.classList.remove("hidden");
+      var logsTab = document.querySelector('.admin-tab[data-atab="logs"]');
+      if (logsTab) logsTab.classList.toggle("hidden", currentUser !== "IT");
+      switchAdminTab("uploads");
+    } else {
+      if (profile) profile.classList.remove("hidden");
+      if (userTabs) userTabs.classList.remove("hidden");
+      if (adminTabs) adminTabs.classList.add("hidden");
+      document.querySelectorAll(".admin-panel").forEach(function (p) { p.classList.remove("active"); p.classList.add("hidden"); });
+      document.getElementById("tab-check").classList.remove("hidden");
+      document.getElementById("tab-billing").classList.add("hidden");
+      document.getElementById("tab-submitted").classList.add("hidden");
+    }
+  }
+
+  function switchAdminTab(tabId) {
+    document.querySelectorAll(".admin-tab").forEach(function (t) { t.classList.toggle("active", t.dataset.atab === tabId); });
+    document.querySelectorAll(".admin-panel").forEach(function (p) {
+      var show = p.id === "apanel-" + tabId;
+      p.classList.toggle("active", show);
+      p.classList.toggle("hidden", !show);
+    });
+    if (tabId === "uploads") { loadUploadsAdminList(); loadCleanupStatus(); }
+    else if (tabId === "users") { loadUserList(); }
+    else if (tabId === "requests") { loadRegRequests(); }
+    else if (tabId === "logs") { loadLogs(); }
+    else if (tabId === "settings") { loadSiteSettingsForm(); }
+  }
+
+  /* ─── tab switching ─── */
+  function switchUserTab(tabId) {
+    document.querySelectorAll(".tabs-trigger").forEach(function (t) { t.classList.toggle("active", t.dataset.tab === tabId); });
+    document.querySelectorAll(".tab-panel").forEach(function (t) { t.classList.toggle("hidden", t.id !== "tab-" + tabId); });
+  }
+
+  /* ─── dialog functions ─── */
   function openDialog(overlay) {
-    focusedBeforeDialog = document.activeElement;
     overlay.classList.remove("hidden", "closing");
-    overlay.classList.remove("closing");
     void overlay.offsetWidth;
     overlay.classList.remove("hidden");
-    dialogs.push(overlay);
-    trapFocus(overlay);
-    overlay.setAttribute("aria-modal", "true");
     var closeBtn = overlay.querySelector(".dialog-close");
     if (closeBtn) closeBtn.focus();
   }
@@ -91,59 +169,44 @@
     overlay.addEventListener("animationend", function onEnd() {
       overlay.classList.add("hidden");
       overlay.classList.remove("closing");
-      overlay.removeAttribute("aria-modal");
       overlay.removeEventListener("animationend", onEnd);
     }, { once: true });
-    dialogs = dialogs.filter(function (d) { return d !== overlay; });
-    if (focusedBeforeDialog) { focusedBeforeDialog.focus(); focusedBeforeDialog = null; }
   }
 
-  function closeTopDialog() {
-    if (dialogs.length) closeDialog(dialogs[dialogs.length - 1]);
+  /* ─── profile ─── */
+  async function loadProfile() {
+    try {
+      var res = await fetch("/api/me");
+      var data = await res.json();
+      userData = data;
+      document.getElementById("profileName").textContent = data.name || data.username;
+      document.getElementById("profileRole").textContent = data.role ? "Role: " + data.role : "Role: User";
+      document.getElementById("profileTeam").textContent = data.team ? "Team: " + data.team : "";
+      if (data.profile_pic) {
+        document.getElementById("profilePicImg").src = "/api/profile-pic/" + encodeURIComponent(data.username) + "?" + Date.now();
+      } else {
+        document.getElementById("profilePicImg").src = "/api/profile-pic/default?" + Date.now();
+      }
+    } catch (_) {}
   }
 
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && dialogs.length) {
-      e.stopPropagation();
-      closeTopDialog();
-    }
+  document.getElementById("profilePicUpload").addEventListener("click", function () {
+    document.getElementById("profilePicInput").click();
   });
 
-  function trapFocus(overlay) {
-    var focusable = overlay.querySelectorAll(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    );
-    if (!focusable.length) return;
-    var first = focusable[0], last = focusable[focusable.length - 1];
+  document.getElementById("profilePicInput").addEventListener("change", function () {
+    if (!this.files.length) return;
+    var fd = new FormData();
+    fd.append("profile_pic", this.files[0]);
+    fetch("/api/profile-pic", { method: "PUT", body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d.ok) { showToast("Profile pic updated", "success"); loadProfile(); } else { showToast(d.error || "Failed"); } })
+      .catch(function () { showToast("Network error"); });
+    this.value = "";
+  });
 
-    function handler(e) {
-      if (e.key !== "Tab") return;
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    }
-    overlay.addEventListener("keydown", handler);
-    overlay._focusTrap = handler;
-  }
 
   /* ─── rest of UI ─── */
-  function updateAdminUI() {
-    var btn = document.getElementById("manageUsersBtn");
-    var uploadsBtn = document.getElementById("uploadsBtn");
-    var siteSettingsBtn = document.getElementById("siteSettingsBtn");
-    var regRequestsBtn = document.getElementById("regRequestsBtn");
-    var title = document.getElementById("headerTitle");
-    var subtitle = document.getElementById("headerSubtitle");
-    var warning = document.getElementById("headerWarning");
-    if (btn) btn.classList.toggle("hidden", !isAdmin);
-    if (uploadsBtn) uploadsBtn.classList.toggle("hidden", !isAdmin);
-    if (siteSettingsBtn) siteSettingsBtn.classList.toggle("hidden", !isAdmin);
-    if (regRequestsBtn) regRequestsBtn.classList.toggle("hidden", !isAdmin);
-    if (title) title.textContent = "Zenov Conveyance Management";
-    if (subtitle) subtitle.classList.toggle("hidden", !isAdmin);
-    if (warning) warning.classList.toggle("hidden", isAdmin);
-    if (!isAdmin) loadMySubmissions();
-  }
-
   function resetUI() {
     resultsSection.classList.add("hidden");
     resultsGrid.innerHTML = "";
@@ -209,11 +272,24 @@
 
   async function submitStagedFiles() {
     if (stagedFiles.length === 0 || busy) return;
+    var monthSelect = document.getElementById("monthSelect");
+    var month = monthSelect.value;
+    if (!month) { showToast("Please select a month before submitting."); monthSelect.focus(); return; }
+
+    var monthBillInput = document.getElementById("monthBillInput");
+    var billVal = parseFloat(monthBillInput.value);
+    if (!isNaN(billVal) && billVal > 0) {
+      try {
+        await fetch("/api/billing/total", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month: month, total_bill: billVal }) });
+      } catch (_) {}
+    }
+
     busy = true;
     var btn = document.getElementById("submitFilesBtn");
     setLoading(btn, true);
 
     var formData = new FormData();
+    formData.append("month", month);
     stagedFiles.forEach(function (f) { formData.append("files", f); });
 
     try {
@@ -221,9 +297,12 @@
       var data = await res.json();
       if (!res.ok) { showToast(data.error || "Submit failed"); busy = false; setLoading(btn, false); return; }
       stagedFiles = [];
+      monthSelect.value = "";
+      monthBillInput.value = "";
       renderStaging();
       showToast(data.message, "success");
       loadMySubmissions();
+      loadBillList();
     } catch (_) { showToast("Network error during submit"); }
     busy = false;
     setLoading(btn, false);
@@ -273,6 +352,7 @@
           clearInterval(pollTimer); pollTimer = null;
           setProgress(analyzeBar, analyzePct, 100);
           renderResults(job.results);
+          showToast("Analysis complete \u2014 " + job.analyzed_count + " file(s) analyzed", "success");
           busy = false;
         } else if (job.status === "failed") {
           clearInterval(pollTimer); pollTimer = null;
@@ -317,7 +397,7 @@
   }
 
   function verdictIcon(v) {
-    var icons = { real: "✓", fake: "✗", unknown: "?", error: "!" };
+    var icons = { real: "?", fake: "?", unknown: "?", error: "!" };
     return icons[v] || "?";
   }
 
@@ -337,18 +417,85 @@
     if (r.creator) parts.push("Creator: " + escapeHtml(r.creator));
     if (r.matched_keywords.length) parts.push("Matched: " + r.matched_keywords.join(", "));
     if (r.error_message) parts.push(escapeHtml(r.error_message));
-    return parts.join(" · ") || "No metadata keywords found";
+    return parts.join(" . ") || "No metadata keywords found";
   }
 
   function escapeHtml(str) { var d = document.createElement("div"); d.textContent = str; return d.innerHTML; }
 
-  /* ─── empty state ─── */
+  /* --- empty state --- */
   function emptyStateHtml(msg, icon) {
-    icon = icon || "📄";
+    icon = icon || "";
     return '<div class="empty-state"><div class="empty-state-icon">' + icon + '</div><div class="empty-state-text">' + msg + '</div></div>';
   }
 
-  /* ─── User Management ─── */
+  /* --- skeleton --- */
+  function skeletonHtml(count, type) {
+    if (type === "row") {
+      var html = "";
+      for (var i = 0; i < count; i++) {
+        var w = 55 + Math.floor(Math.random() * 35);
+        html += '<div class="skeleton" style="height:1rem;width:' + w + '%;margin-bottom:0.625rem"></div>';
+      }
+      return '<div style="padding:0.75rem 0">' + html + '</div>';
+    }
+    if (type === "card") {
+      var html = "";
+      for (var i = 0; i < count; i++) {
+        html += '<div style="padding:0.75rem 0;border-bottom:1px solid hsl(var(--border))">' +
+          '<div class="skeleton" style="height:1rem;width:45%;margin-bottom:0.5rem"></div>' +
+          '<div class="skeleton" style="height:0.75rem;width:70%"></div>' +
+          '</div>';
+      }
+      return html;
+    }
+    if (type === "user-card") {
+      var html = "";
+      for (var i = 0; i < count; i++) {
+        html += '<div style="padding:0.75rem 0;border-bottom:1px solid hsl(var(--border));display:flex;align-items:center;gap:0.75rem">' +
+          '<div class="skeleton" style="height:1rem;width:35%;flex:1"></div>' +
+          '<div class="skeleton" style="height:1.5rem;width:1.5rem;border-radius:var(--radius);flex-shrink:0"></div>' +
+          '</div>';
+      }
+      return html;
+    }
+    if (type === "file-list") {
+      var html = "";
+      for (var i = 0; i < count; i++) {
+        html += '<div style="padding:0.5rem 0;display:flex;align-items:center;gap:0.5rem">' +
+          '<div class="skeleton" style="height:0.65rem;width:3.5rem;border-radius:9999px;flex-shrink:0"></div>' +
+          '<div class="skeleton" style="height:0.875rem;width:40%;flex:1"></div>' +
+          '<div class="skeleton" style="height:0.7rem;width:3rem;border-radius:9999px;flex-shrink:0"></div>' +
+          '<div class="skeleton" style="height:1.5rem;width:1.5rem;border-radius:var(--radius);flex-shrink:0"></div>' +
+          '</div>';
+      }
+      return html;
+    }
+    if (type === "text") {
+      var html = "";
+      for (var i = 0; i < count; i++) {
+        var w = 70 + Math.floor(Math.random() * 30);
+        html += '<div class="skeleton" style="height:0.875rem;width:' + w + '%;margin-bottom:0.75rem"></div>';
+      }
+      return html;
+    }
+    if (type === "reg-card") {
+      var html = "";
+      for (var i = 0; i < count; i++) {
+        html += '<div style="padding:0.75rem 0;border-bottom:1px solid hsl(var(--border))">' +
+          '<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">' +
+          '<div class="skeleton" style="height:1rem;width:40%;flex:1"></div>' +
+          '<div class="skeleton" style="height:1.5rem;width:1.5rem;border-radius:var(--radius);flex-shrink:0"></div>' +
+          '</div>' +
+          '<div class="skeleton" style="height:0.75rem;width:55%;margin-bottom:0.375rem"></div>' +
+          '<div class="skeleton" style="height:0.75rem;width:65%"></div>' +
+          '</div>';
+      }
+      return html;
+    }
+    return '<div class="skeleton" style="height:' + (typeof count === "number" ? count : 1) + 'rem;width:100%"></div>';
+  }
+
+  /* --- User Management --- */
   function generatePassword(len) {
     var chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%&*";
     var pw = "";
@@ -358,21 +505,24 @@
     return pw;
   }
 
-  function openUserModal() { openDialog(document.getElementById("userModalOverlay")); loadUserList(); document.getElementById("newUsername").value = ""; document.getElementById("newPassword").value = ""; document.getElementById("userModalError").classList.add("hidden"); }
-  function closeUserModal() { closeDialog(document.getElementById("userModalOverlay")); }
 
-  var showPasswords = false;
+
 
   async function loadUserList() {
     var list = document.getElementById("userList");
+    list.innerHTML = skeletonHtml(6, "user-card");
     try {
       var res = showPasswords ? await fetch("/api/users/with-passwords") : await fetch("/api/users");
       if (!res.ok) return;
       var data = await res.json();
       if (!data.users.length) { list.innerHTML = emptyStateHtml("No users yet"); return; }
       list.innerHTML = data.users.map(function (u) {
+        var picUrl = "/api/profile-pic/" + encodeURIComponent(u.username);
         return '<div class="user-row">' +
+          '<div class="user-cell" style="display:flex;align-items:center;gap:0.5rem;flex:1">' +
+          '<img class="profile-pic profile-pic-sm" src="' + picUrl + '" alt="" onerror="this.style.display=\'none\'" />' +
           '<span class="user-name">' + escapeHtml(u.username) + "</span>" +
+          "</div>" +
           (showPasswords && u.password ? '<span class="user-password">' + escapeHtml(u.password) + "</span>" : "") +
           (u.username !== "root" && u.username !== currentUser ? '<button class="btn btn-ghost btn-icon btn-sm" data-delete="' + escapeHtml(u.username) + '" title="Delete user" style="color:hsl(var(--destructive))">&times;</button>' : "") +
           "</div>";
@@ -404,33 +554,54 @@
   async function deleteUser(username) {
     if (!confirm('Delete user "' + username + '"?')) return;
     if (!confirm("Are you really sure? This cannot be undone.")) return;
-    try { var res = await fetch("/api/users/" + encodeURIComponent(username), { method: "DELETE" }); if (res.ok) loadUserList(); } catch (_) {}
+    try { var res = await fetch("/api/users/" + encodeURIComponent(username), { method: "DELETE" }); var data = await res.json(); if (res.ok) { showToast(data.message || "User deleted", "success"); loadUserList(); } else { showToast(data.error || "Delete failed"); } } catch (_) { showToast("Network error"); }
   }
 
-  /* ─── My Submissions ─── */
+  /* --- My Submissions --- */
   async function loadMySubmissions() {
     if (isAdmin) return;
+    var section = document.getElementById("mySubmissionsList");
+    section.innerHTML = skeletonHtml(4, "row");
     try {
       var res = await fetch("/api/my-submissions");
       if (res.status === 401) { window.location.href = "/login"; return; }
       if (!res.ok) return;
       var data = await res.json();
-      var section = document.getElementById("mySubmissions");
-      var list = document.getElementById("mySubmissionsList");
-      if (data.files.length === 0) { section.classList.add("hidden"); return; }
-      section.classList.remove("hidden");
-      list.innerHTML = data.files.map(function (f) {
-        var sizeMB = (f.size / (1024 * 1024)).toFixed(2);
-        var remaining = formatRemaining(f.remaining);
-        return '<div class="submission-item">' +
-          '<div class="submission-info">' +
-          '<span class="submission-name" title="' + escapeHtml(f.name) + '">' + escapeHtml(f.name) + "</span>" +
-          '<span class="submission-meta">' + sizeMB + " MB" + (f.can_delete ? " · " + remaining : " · Delete expired") + "</span>" +
-          "</div>" +
-          (f.can_delete ? '<button class="btn btn-ghost btn-icon btn-sm" data-my-delete="' + escapeHtml(f.name) + '" title="Delete" style="color:hsl(var(--destructive))">&times;</button>' : "") +
-          "</div>";
-      }).join("");
-      list.querySelectorAll("[data-my-delete]").forEach(function (btn) { btn.addEventListener("click", function () { deleteMySubmission(btn.dataset.myDelete); }); });
+      if (data.files.length === 0) { section.innerHTML = emptyStateHtml("No submissions yet"); return; }
+
+      var grouped = {};
+      var monthOrder = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+      data.files.forEach(function (f) {
+        if (!grouped[f.month]) grouped[f.month] = [];
+        grouped[f.month].push(f);
+      });
+
+      var html = "";
+      monthOrder.forEach(function (m) {
+        var files = grouped[m];
+        if (!files) return;
+        html += '<div class="month-group">' +
+          '<div class="month-group-header"><span class="badge badge-outline month-badge">' + m + '</span></div>';
+        html += files.map(function (f) {
+          var sizeMB = (f.size / (1024 * 1024)).toFixed(2);
+          var remaining = formatRemaining(f.remaining);
+          return '<div class="submission-item">' +
+            '<div class="submission-info">' +
+            '<span class="submission-name" title="' + escapeHtml(f.name) + '">' + escapeHtml(f.name) + "</span>" +
+            '<span class="submission-meta">' + sizeMB + " MB" + (f.can_delete ? " . " + remaining : " . Delete expired") + "</span>" +
+            "</div>" +
+            (f.can_delete ? '<button class="btn btn-ghost btn-icon btn-sm" data-my-delete=\'' + escapeHtml(JSON.stringify({month:f.month,name:f.name})) + "' title=\"Delete\" style=\"color:hsl(var(--destructive));font-size:0.5em\">&times;</button>" : "") +
+            "</div>";
+        }).join("");
+        html += "</div>";
+      });
+      section.innerHTML = html;
+      section.querySelectorAll("[data-my-delete]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var info = JSON.parse(btn.dataset.myDelete);
+          deleteMySubmission(info.month, info.name, btn);
+        });
+      });
     } catch (_) {}
   }
 
@@ -443,45 +614,107 @@
     return m + " minute" + (m > 1 ? "s" : "") + " left to delete";
   }
 
-  async function deleteMySubmission(filename) {
-    if (!confirm('Delete "' + filename + '"?')) return;
-    var btn = document.querySelector('[data-my-delete="' + escapeHtml(filename) + '"]');
+  async function deleteMySubmission(month, filename, btn) {
+    if (!confirm('Delete "' + filename + '" from ' + month + '?')) return;
+    if (!btn) btn = document.querySelector('[data-my-delete*="' + escapeHtml(filename) + '"]');
     setLoading(btn, true);
     try {
-      var res = await fetch("/api/my-submissions/" + encodeURIComponent(filename), { method: "DELETE" });
+      var res = await fetch("/api/my-submissions/" + encodeURIComponent(month) + "/" + encodeURIComponent(filename), { method: "DELETE" });
       var data = await res.json();
-      if (res.ok) loadMySubmissions(); else showToast(data.error || "Delete failed");
+      if (res.ok) { showToast(data.message || "File deleted", "success"); loadMySubmissions(); } else showToast(data.error || "Delete failed");
     } catch (_) { showToast("Network error"); }
     if (btn) setLoading(btn, false);
   }
 
-  /* ─── Admin Dashboard ─── */
-  function openUploadsModal() {
-    openDialog(document.getElementById("uploadsModalOverlay"));
-    loadUploadsModal();
-    loadCleanupStatus();
-    var isIT = window.__CURRENT_USER === "IT";
-    document.getElementById("logsDivider").classList.toggle("hidden", !isIT);
-    document.getElementById("logsTitle").classList.toggle("hidden", !isIT);
-    document.getElementById("logsViewer").classList.toggle("hidden", !isIT);
-    if (isIT) loadLogs();
+  /* --- Billing --- */
+  function loadExistingMonthBill(month) {
+    var input = document.getElementById("monthBillInput");
+    if (!month) { input.value = ""; return; }
+    fetch("/api/billing").then(function (r) { return r.json(); }).then(function (data) {
+      var bill = (data.total_bills && data.total_bills[month]) || 0;
+      input.value = bill > 0 ? bill : "";
+    }).catch(function () {});
   }
 
-  function closeUploadsModal() { closeDialog(document.getElementById("uploadsModalOverlay")); }
+  async function loadBillList() {
+    if (isAdmin) return;
+    var list = document.getElementById("billList");
+    try {
+      var res = await fetch("/api/billing");
+      if (!res.ok) return;
+      var data = await res.json();
+      if (!data.entries || data.entries.length === 0) {
+        list.innerHTML = emptyStateHtml("No billing entries yet. Submit PDFs first.");
+        return;
+      }
+      var html = "";
+      var monthOrder = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+      var byMonth = {};
+      data.entries.forEach(function (e) {
+        if (!byMonth[e.month]) byMonth[e.month] = [];
+        byMonth[e.month].push(e);
+      });
+      var grandTotal = 0;
+      monthOrder.forEach(function (m) {
+        var entries = byMonth[m];
+        if (!entries) return;
+        var monthTotal = data.total_bills && data.total_bills[m] ? data.total_bills[m] : 0;
+        grandTotal += monthTotal;
+        html += '<div class="month-group">' +
+          '<div class="month-group-header"><span class="badge badge-outline month-badge">' + m + '</span>' +
+          (monthTotal > 0 ? ' <span class="badge badge-default month-badge" style="margin-left:0.375rem">Total: ৳' + monthTotal.toFixed(2) + '</span>' : '') +
+          '</div>';
+        entries.forEach(function (e) {
+          html += '<div class="bill-row">' +
+            '<span>' + escapeHtml(e.filename) + '</span>' +
+            '<span>' + (e.amount ? "৳" + e.amount.toFixed(2) : "—") + '</span>' +
+            '</div>';
+        });
+        html += '</div>';
+      });
+      if (grandTotal > 0) {
+        html += '<div class="bill-row bill-total"><span>Grand Total</span><span>৳' + grandTotal.toFixed(2) + '</span></div>';
+      }
+      list.innerHTML = html;
+    } catch (_) { list.innerHTML = emptyStateHtml("Failed to load billing"); }
+  }
 
+  
+  /* --- set month bill toast --- */
+  document.getElementById("setMonthBillBtn").addEventListener("click", async function () {
+    var month = document.getElementById("monthSelect").value;
+    var val = parseFloat(document.getElementById("monthBillInput").value);
+    if (!month) { showToast("Select a month first"); return; }
+    if (isNaN(val) || val <= 0) { showToast("Enter a valid total bill amount"); return; }
+    try {
+      var res = await fetch("/api/billing/total", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month: month, total_bill: val }) });
+      var data = await res.json();
+      if (res.ok) { showToast("Total bill set to \u09F3" + val.toFixed(2) + " for " + month, "success"); loadBillList(); }
+      else { showToast(data.error || "Failed to set bill"); }
+    } catch (_) { showToast("Network error"); }
+  });
+
+  document.getElementById("monthSelect").addEventListener("change", function () {
+    loadExistingMonthBill(this.value);
+  });
+
+  /* --- Admin Dashboard --- */
   async function loadUploadsModal() {
     var list = document.getElementById("uploadsModalList");
+    list.innerHTML = skeletonHtml(8, "file-list");
     try {
       var res = await fetch("/api/admin/uploads");
       if (!res.ok) return;
       var data = await res.json();
-      if (data.users.length === 0) { list.innerHTML = emptyStateHtml("No submissions yet", "📭"); return; }
+      if (data.users.length === 0) { list.innerHTML = emptyStateHtml("No submissions yet", ""); return; }
       list.innerHTML = data.users.map(function (u) {
         return '<div class="admin-user-card' + (u.count === 0 ? " no-uploads" : "") + '">' +
           '<div class="admin-user-header">' +
-          '<span class="admin-user-name">' + escapeHtml(u.username) + "</span>" +
+          '<span class="admin-user-name">' +
+          '<img class="profile-pic profile-pic-sm" src="/api/profile-pic/' + encodeURIComponent(u.username) + '" alt="" onerror="this.style.display=\'none\'" style="vertical-align:middle;margin-right:0.375rem" />' +
+          escapeHtml(u.username) + '</span>' +
           '<div class="admin-user-actions">' +
-          (u.count > 0 ? '<button class="btn btn-outline btn-sm open-folder-btn" data-open-folder="' + escapeHtml(u.username) + '" title="Open this user\'s folder in Explorer">Open Folder</button>' : "") +
+          (u.count > 0 ? '<button class="btn btn-outline btn-sm open-folder-btn" data-open-folder="' + escapeHtml(u.username) + '" title="Open folder">Open Folder</button>' : "") +
           '<span class="admin-file-count' + (u.count === 0 ? " text-muted" : "") + '">' + (u.count === 0 ? "No uploads" : u.count + " file(s)") + "</span>" +
           "</div></div>" +
           (u.count > 0 ? '<div class="admin-file-list">' + u.files.map(function (f) {
@@ -489,39 +722,115 @@
             var vLabel = verdictLabel(v);
             var vBadge = badgeClass(v);
             var source = f.producer || f.creator || "";
+            var verifClass = f.verified === true ? "verified" : (f.verified === false ? "malicious" : "unverified");
+            var verifLabel = f.verified === true ? "Verified" : (f.verified === false ? "Malicious" : "Unverified");
             return '<div class="admin-file-row">' +
+              (f.month ? '<span class="badge badge-outline" style="font-size:0.65rem;margin-right:0.5rem">' + escapeHtml(f.month) + '</span>' : "") +
               '<span class="admin-file-name">' + escapeHtml(f.name) + "</span>" +
               '<span class="badge ' + vBadge + '" style="font-size:0.7rem">' + vLabel + "</span>" +
               (f.duplicate ? '<span class="badge badge-destructive" style="font-size:0.7rem">Duplicate</span>' : "") +
+              '<button class="verify-btn ' + verifClass + '" data-verify=\'' + escapeHtml(JSON.stringify({user:u.username,month:f.month,name:f.name})) + "' title=\"Toggle verification\">" + verifLabel + "</button>" +
               (source ? '<span class="admin-file-source">' + escapeHtml(source) + "</span>" : "") +
-              '<button class="btn btn-ghost btn-icon btn-sm" data-modal-delete="' + escapeHtml(u.username) + "/" + escapeHtml(f.name) + '" title="Delete" style="color:hsl(var(--destructive))">&times;</button>' +
+              '<button class="btn btn-ghost btn-icon btn-sm" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\" style=\"color:hsl(var(--destructive));font-size:0.5em\">&times;</button>" +
               "</div>";
           }).join("") + "</div>" : "") +
           "</div>";
       }).join("");
       list.querySelectorAll("[data-modal-delete]").forEach(function (btn) { btn.addEventListener("click", function () { modalDeleteFile(btn.getAttribute("data-modal-delete")); }); });
       list.querySelectorAll("[data-open-folder]").forEach(function (btn) { btn.addEventListener("click", function () { openUserFolder(btn.dataset.openFolder); }); });
+      list.querySelectorAll("[data-verify]").forEach(function (btn) { btn.addEventListener("click", function () { toggleVerification(btn.dataset.verify); }); });
+    } catch (_) { list.innerHTML = emptyStateHtml("Failed to load uploads"); }
+  }
+
+
+  function filterAdminUploads() {
+    var q = (document.getElementById("adminUploadsSearch").value || "").toLowerCase().trim();
+    var list = document.getElementById("uploadsAdminList");
+    list.querySelectorAll(".admin-user-card").forEach(function (card) {
+      var name = card.querySelector(".admin-user-name").textContent.toLowerCase();
+      card.style.display = (!q || name.indexOf(q) !== -1) ? "" : "none";
+    });
+  }
+
+  async function loadUploadsAdminList() {
+    var list = document.getElementById("uploadsAdminList");
+    if (!document.getElementById("adminUploadsSearch")) {
+      var wrapper = document.createElement("div");
+      wrapper.style.marginBottom = "0.75rem";
+      wrapper.innerHTML = '<input class="input" id="adminUploadsSearch" type="text" placeholder="Search by username..." style="max-width:20rem" />';
+      list.parentNode.insertBefore(wrapper, list);
+      document.getElementById("adminUploadsSearch").addEventListener("keyup", filterAdminUploads);
+    }
+    var cleanupBtn = document.getElementById("runCleanupBtn");
+    if (cleanupBtn) { cleanupBtn.classList.remove("btn-outline"); cleanupBtn.classList.add("btn-destructive"); }
+    list.innerHTML = skeletonHtml(8, "file-list");
+    try {
+      var res = await fetch("/api/admin/uploads");
+      if (!res.ok) return;
+      var data = await res.json();
+      if (data.users.length === 0) { list.innerHTML = emptyStateHtml("No submissions yet", ""); return; }
+      list.innerHTML = data.users.map(function (u) {
+        return '<div class="admin-user-card' + (u.count === 0 ? " no-uploads" : "") + '">' +
+          '<div class="admin-user-header">' +
+          '<span class="admin-user-name">' +
+          '<img class="profile-pic profile-pic-sm" src="/api/profile-pic/' + encodeURIComponent(u.username) + '" alt="" onerror="this.style.display=\'none\'" style="vertical-align:middle;margin-right:0.375rem" />' +
+          escapeHtml(u.username) + '</span>' +
+          '<div class="admin-user-actions">' +
+          (u.count > 0 ? '<button class="btn btn-outline btn-sm open-folder-btn" data-open-folder="' + escapeHtml(u.username) + '" title="Open folder">Open Folder</button>' : "") +
+          '<span class="admin-file-count' + (u.count === 0 ? " text-muted" : "") + '">' + (u.count === 0 ? "No uploads" : u.count + " file(s)") + "</span>" +
+          "</div></div>" +
+          (u.count > 0 ? '<div class="admin-file-list">' + u.files.map(function (f) {
+            var v = f.verdict || "";
+            var vLabel = verdictLabel(v);
+            var vBadge = badgeClass(v);
+            var source = f.producer || f.creator || "";
+            var verifClass = f.verified === true ? "verified" : (f.verified === false ? "malicious" : "unverified");
+            var verifLabel = f.verified === true ? "Verified" : (f.verified === false ? "Malicious" : "Unverified");
+            return '<div class="admin-file-row">' +
+              (f.month ? '<span class="badge badge-outline" style="font-size:0.65rem;margin-right:0.5rem">' + escapeHtml(f.month) + '</span>' : "") +
+              '<span class="admin-file-name">' + escapeHtml(f.name) + "</span>" +
+              '<span class="badge ' + vBadge + '" style="font-size:0.7rem">' + vLabel + "</span>" +
+              (f.duplicate ? '<span class="badge badge-destructive" style="font-size:0.7rem">Duplicate</span>' : "") +
+              '<button class="verify-btn ' + verifClass + '" data-verify=\'' + escapeHtml(JSON.stringify({user:u.username,month:f.month,name:f.name})) + "' title=\"Toggle verification\">" + verifLabel + "</button>" +
+              (source ? '<span class="admin-file-source">' + escapeHtml(source) + "</span>" : "") +
+              '<button class="btn btn-ghost btn-icon btn-sm" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\" style=\"color:hsl(var(--destructive));font-size:0.5em\">&times;</button>" +
+              "</div>";
+          }).join("") + "</div>" : "") +
+          "</div>";
+      }).join("");
+      list.querySelectorAll("[data-modal-delete]").forEach(function (btn) { btn.addEventListener("click", function () { modalDeleteFile(btn.getAttribute("data-modal-delete")); }); });
+      list.querySelectorAll("[data-open-folder]").forEach(function (btn) { btn.addEventListener("click", function () { openUserFolder(btn.dataset.openFolder); }); });
+      list.querySelectorAll("[data-verify]").forEach(function (btn) { btn.addEventListener("click", function () { toggleVerification(btn.dataset.verify); }); });
+      filterAdminUploads();
     } catch (_) { list.innerHTML = emptyStateHtml("Failed to load uploads"); }
   }
 
   async function modalDeleteFile(path) {
     if (!confirm("Delete this file?")) return;
-    try { var res = await fetch("/api/admin/uploads/" + path, { method: "DELETE" }); if (res.ok) loadUploadsModal(); } catch (_) {}
+    try { var res = await fetch("/api/admin/uploads/" + path, { method: "DELETE" }); var data = await res.json(); if (res.ok) { showToast(data.message || "File deleted", "success"); loadUploadsAdminList(); } else { showToast(data.error || "Delete failed"); } } catch (_) { showToast("Network error"); }
   }
 
   async function openUserFolder(username) { try { await fetch("/api/admin/open-folder/" + encodeURIComponent(username)); } catch (_) {} }
 
-  /* ─── Registration Requests ─── */
-  function openRegRequests() { openDialog(document.getElementById("regRequestsOverlay")); loadRegRequests(); }
-  function closeRegRequests() { closeDialog(document.getElementById("regRequestsOverlay")); }
+  async function toggleVerification(jsonStr) {
+    var info;
+    try { info = JSON.parse(jsonStr); } catch (_) { return; }
+    try {
+      var res = await fetch("/api/admin/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: info.user, month: info.month, filename: info.name }) });
+      var data = await res.json();
+      if (res.ok) { showToast(data.message || "Verification toggled", "success"); loadUploadsAdminList(); } else showToast(data.error || "Failed");
+    } catch (_) { showToast("Network error"); }
+  }
 
+  /* --- Registration Requests --- */
   async function loadRegRequests() {
     var list = document.getElementById("regRequestsList");
+    list.innerHTML = skeletonHtml(4, "reg-card");
     try {
       var res = await fetch("/api/admin/registration-requests");
       if (!res.ok) return;
       var data = await res.json();
-      if (data.requests.length === 0) { list.innerHTML = emptyStateHtml("No requests yet", "📋"); return; }
+      if (data.requests.length === 0) { list.innerHTML = emptyStateHtml("No requests yet", ""); return; }
       list.innerHTML = data.requests.map(function (r) {
         return '<div class="reg-request-card">' +
           '<div class="reg-request-header">' +
@@ -531,23 +840,20 @@
           '<div class="reg-request-details">' +
           '<span class="reg-request-team">' + escapeHtml(r.team) + "</span>" +
           '<span class="reg-request-gmail">' + escapeHtml(r.gmail) + "</span>" +
-          '<button class="reg-request-copy" data-copy="' + escapeHtml(r.gmail) + '" title="Copy email">⧉</button>' +
+          '<button class="reg-request-copy" data-copy="' + escapeHtml(r.gmail) + '" title="Copy email">?</button>' +
           "</div></div>";
       }).join("");
-      list.querySelectorAll("[data-copy]").forEach(function (btn) { btn.addEventListener("click", function () { navigator.clipboard.writeText(btn.dataset.copy); btn.textContent = "✓"; setTimeout(function () { btn.textContent = "⧉"; }, 1500); }); });
+      list.querySelectorAll("[data-copy]").forEach(function (btn) { btn.addEventListener("click", function () { navigator.clipboard.writeText(btn.dataset.copy); btn.textContent = "?"; setTimeout(function () { btn.textContent = "?"; }, 1500); }); });
       list.querySelectorAll("[data-delete-reg]").forEach(function (btn) { btn.addEventListener("click", function () { deleteRegRequest(btn.dataset.deleteReg); }); });
     } catch (_) { list.innerHTML = emptyStateHtml("Failed to load requests"); }
   }
 
   async function deleteRegRequest(gmail) {
     if (!confirm("Remove this request?")) return;
-    try { var res = await fetch("/api/admin/registration-requests", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ gmail: gmail }) }); if (res.ok) loadRegRequests(); } catch (_) {}
+    try { var res = await fetch("/api/admin/registration-requests", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ gmail: gmail }) }); var data = await res.json(); if (res.ok) { showToast(data.message || "Request removed", "success"); loadRegRequests(); } else { showToast(data.error || "Failed to remove"); } } catch (_) { showToast("Network error"); }
   }
 
-  /* ─── Site Settings ─── */
-  function openSiteSettings() { openDialog(document.getElementById("siteSettingsOverlay")); loadSiteSettingsForm(); }
-  function closeSiteSettings() { closeDialog(document.getElementById("siteSettingsOverlay")); }
-
+  /* --- Site Settings --- */
   async function loadSiteSettingsForm() {
     try { var res = await fetch("/api/site-config"); if (!res.ok) return; var data = await res.json(); document.getElementById("dailyQuoteInput").value = data.daily_quote || ""; document.getElementById("maintenanceInput").value = data.maintenance_message || ""; } catch (_) {}
   }
@@ -559,7 +865,7 @@
     alertEl.classList.add("hidden");
     try {
       var res = await fetch("/api/admin/site-config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ daily_quote: document.getElementById("dailyQuoteInput").value.trim(), maintenance_message: document.getElementById("maintenanceInput").value.trim() }) });
-      if (res.ok) { showToast("Settings saved", "success"); loadSiteConfig(); } else { showToast("Failed to save"); }
+      if (res.ok) { showToast("Settings saved", "success"); loadSiteConfig(); } else { showToast("Failed to save"); alertEl.textContent = "Failed to save"; alertEl.classList.remove("hidden"); }
     } catch (_) { showToast("Network error"); }
     setLoading(btn, false);
   }
@@ -570,64 +876,86 @@
       if (!res.ok) return;
       var data = await res.json();
       var quoteEl = document.getElementById("dailyQuote");
-      if (data.daily_quote) { quoteEl.textContent = "\u201C" + data.daily_quote + "\u201D"; quoteEl.classList.remove("hidden"); } else { quoteEl.classList.add("hidden"); }
+      if (data.daily_quote) { quoteEl.textContent = "" + data.daily_quote + ""; quoteEl.classList.remove("hidden"); } else { quoteEl.classList.add("hidden"); }
       var bannerEl = document.getElementById("maintenanceBanner");
       if (data.maintenance_message) { document.getElementById("maintenanceText").textContent = data.maintenance_message; bannerEl.classList.remove("hidden"); } else { bannerEl.classList.add("hidden"); }
     } catch (_) {}
   }
 
-  /* ─── Cleanup ─── */
-  async function loadCleanupStatus() { try { var res = await fetch("/api/admin/cleanup-status"); if (!res.ok) return; document.getElementById("cleanupToggle").checked = (await res.json()).enabled; } catch (_) {} }
-  async function toggleCleanup() { try { await fetch("/api/admin/cleanup-toggle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: document.getElementById("cleanupToggle").checked }) }); } catch (_) {} }
-  async function runCleanup() {
-    if (!confirm("Delete all PDFs older than 90 days?")) return;
-    var btn = document.getElementById("runCleanupBtn");
-    setLoading(btn, true);
-    try { var res = await fetch("/api/admin/cleanup", { method: "POST" }); var data = await res.json(); if (res.ok) { showToast("Cleanup done \u2014 " + data.deleted + " file(s) deleted", "success"); loadUploadsModal(); } } catch (_) {}
-    setLoading(btn, false);
-  }
-
-  /* ─── Logs ─── */
+  /* --- Cleanup --- */
   async function loadLogs() {
     try {
       var res = await fetch("/api/logs");
       if (!res.ok) return;
       var data = await res.json();
-      var viewer = document.getElementById("logsViewer");
+      var viewer = document.getElementById("adminLogsViewer");
       viewer.textContent = data.logs || "No logs yet";
       viewer.scrollTop = viewer.scrollHeight;
-    } catch (_) { document.getElementById("logsViewer").textContent = "Failed to load logs"; }
+    } catch (_) { document.getElementById("adminLogsViewer").textContent = "Failed to load logs"; }
   }
 
-  /* ─── Event listeners ─── */
+
+  async function loadCleanupStatus() { try { var res = await fetch("/api/admin/cleanup-status"); if (!res.ok) return; document.getElementById("cleanupToggle").checked = (await res.json()).enabled; } catch (_) {} }
+  async function toggleCleanup() { try { var en = document.getElementById("cleanupToggle").checked; var res = await fetch("/api/admin/cleanup-toggle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: en }) }); if (res.ok) showToast("Auto-cleanup " + (en ? "enabled" : "disabled"), "success"); } catch (_) {} }
+  async function runCleanup() {
+    if (!confirm("Delete all user submissions?")) return;
+    if (!confirm("Are you sure? This action cannot be undone.")) return;
+    var btn = document.getElementById("runCleanupBtn");
+    setLoading(btn, true);
+    try { var res = await fetch("/api/admin/cleanup", { method: "POST" }); if (res.ok) { showToast("All submissions deleted", "success"); loadUploadsAdminList(); } else { var d = await res.json(); showToast(d.error || "Cleanup failed"); } } catch (_) { showToast("Cleanup failed"); }
+    setLoading(btn, false);
+  }
+
+  /* --- Logs --- */
+  async function loadAdminLogs() {
+    var viewer = document.getElementById("adminLogsViewer");
+    viewer.innerHTML = skeletonHtml(12, "text");
+    try {
+      var res = await fetch("/api/logs");
+      if (!res.ok) return;
+      var data = await res.json();
+      viewer.textContent = data.logs || "No logs yet";
+      viewer.scrollTop = viewer.scrollHeight;
+    } catch (_) { viewer.textContent = "Failed to load logs"; }
+  }
+
+  /* --- Event listeners --- */
   fileInput.addEventListener("change", function () { if (fileInput.files.length) handleFiles(fileInput.files); fileInput.value = ""; });
   folderInput.addEventListener("change", function () { if (folderInput.files.length) handleFiles(folderInput.files); folderInput.value = ""; });
   dropZone.addEventListener("dragover", function (e) { e.preventDefault(); dropZone.classList.add("drag-over"); });
   dropZone.addEventListener("dragleave", function () { dropZone.classList.remove("drag-over"); });
   dropZone.addEventListener("drop", function (e) { e.preventDefault(); dropZone.classList.remove("drag-over"); if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
 
-  document.getElementById("manageUsersBtn").addEventListener("click", openUserModal);
-  document.getElementById("closeUserModal").addEventListener("click", closeUserModal);
-  document.getElementById("userModalOverlay").addEventListener("click", function (e) { if (e.target === e.currentTarget) closeUserModal(); });
-  document.getElementById("createUserBtn").addEventListener("click", createUser);
-  document.getElementById("generatePwBtn").addEventListener("click", function () { document.getElementById("newPassword").value = generatePassword(16); });
-  document.getElementById("togglePasswordsBtn").addEventListener("click", function () { showPasswords = !showPasswords; document.getElementById("togglePasswordsBtn").textContent = showPasswords ? "Hide Passwords" : "Show Passwords"; loadUserList(); });
-  document.getElementById("submitFilesBtn").addEventListener("click", submitStagedFiles);
-  document.getElementById("clearStagingBtn").addEventListener("click", function () { stagedFiles = []; renderStaging(); });
-  document.getElementById("uploadsBtn").addEventListener("click", openUploadsModal);
-  document.getElementById("closeUploadsModal").addEventListener("click", closeUploadsModal);
-  document.getElementById("uploadsModalOverlay").addEventListener("click", function (e) { if (e.target === e.currentTarget) closeUploadsModal(); });
-  document.getElementById("refreshMySubmissionsBtn").addEventListener("click", loadMySubmissions);
-  document.getElementById("cleanupToggle").addEventListener("change", toggleCleanup);
-  document.getElementById("runCleanupBtn").addEventListener("click", runCleanup);
-  document.getElementById("siteSettingsBtn").addEventListener("click", openSiteSettings);
-  document.getElementById("closeSiteSettings").addEventListener("click", closeSiteSettings);
-  document.getElementById("siteSettingsOverlay").addEventListener("click", function (e) { if (e.target === e.currentTarget) closeSiteSettings(); });
-  document.getElementById("saveSiteSettingsBtn").addEventListener("click", saveSiteSettings);
-  document.getElementById("regRequestsBtn").addEventListener("click", openRegRequests);
-  document.getElementById("closeRegRequests").addEventListener("click", closeRegRequests);
-  document.getElementById("regRequestsOverlay").addEventListener("click", function (e) { if (e.target === e.currentTarget) closeRegRequests(); });
+  function onId(id, event, fn) { var el = document.getElementById(id); if (el) el.addEventListener(event, fn); }
+  onId("submitFilesBtn", "click", submitStagedFiles);
+  onId("clearStagingBtn", "click", function () { stagedFiles = []; document.getElementById("monthSelect").value = ""; document.getElementById("monthBillInput").value = ""; renderStaging(); });
+  onId("refreshMySubmissionsBtn", "click", loadMySubmissions);
+  onId("cleanupToggle", "change", toggleCleanup);
+  onId("runCleanupBtn", "click", runCleanup);
+  onId("manageUsersBtn", "click", function () { openDialog(document.getElementById("userModalOverlay")); loadUserList(); });
+  onId("closeUserModal", "click", function () { closeDialog(document.getElementById("userModalOverlay")); });
+  onId("userModalOverlay", "click", function (e) { if (e.target === this) closeDialog(document.getElementById("userModalOverlay")); });
+  onId("createUserBtn", "click", createUser);
+  onId("generatePwBtn", "click", function () { document.getElementById("newPassword").value = generatePassword(16); });
+  onId("togglePasswordsBtn", "click", function () { showPasswords = !showPasswords; document.getElementById("togglePasswordsBtn").textContent = showPasswords ? "Hide Passwords" : "Show Passwords"; loadUserList(); });
+  onId("uploadsBtn", "click", function () { openDialog(document.getElementById("uploadsModalOverlay")); loadUploadsModal(); loadCleanupStatus(); var isIT = currentUser === "IT"; document.getElementById("logsDivider").classList.toggle("hidden", !isIT); document.getElementById("logsTitle").classList.toggle("hidden", !isIT); document.getElementById("logsViewer").classList.toggle("hidden", !isIT); if (isIT) loadLogs(); });
+  onId("closeUploadsModal", "click", function () { closeDialog(document.getElementById("uploadsModalOverlay")); });
+  onId("uploadsModalOverlay", "click", function (e) { if (e.target === this) closeDialog(document.getElementById("uploadsModalOverlay")); });
+  onId("regRequestsBtn", "click", function () { openDialog(document.getElementById("regRequestsOverlay")); loadRegRequests(); });
+  onId("closeRegRequests", "click", function () { closeDialog(document.getElementById("regRequestsOverlay")); });
+  onId("regRequestsOverlay", "click", function (e) { if (e.target === this) closeDialog(document.getElementById("regRequestsOverlay")); });
+  onId("siteSettingsBtn", "click", function () { openDialog(document.getElementById("siteSettingsOverlay")); loadSiteSettingsForm(); });
+  onId("closeSiteSettings", "click", function () { closeDialog(document.getElementById("siteSettingsOverlay")); });
+  onId("siteSettingsOverlay", "click", function (e) { if (e.target === this) closeDialog(document.getElementById("siteSettingsOverlay")); });
+  onId("saveSiteSettingsBtn", "click", saveSiteSettings);
 
-  updateAdminUI();
-  loadSiteConfig();
+  /* --- tab listeners --- */
+  document.querySelectorAll(".tabs-trigger").forEach(function (btn) {
+    btn.addEventListener("click", function () { switchUserTab(btn.dataset.tab); });
+  });
+
+  document.querySelectorAll(".admin-tab").forEach(function (btn) {
+    btn.addEventListener("click", function () { switchAdminTab(btn.dataset.atab); });
+  });
+
 })();
