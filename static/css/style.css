@@ -387,6 +387,8 @@ body{
   border-radius:var(--radius)
 }
 .staging-name{flex:1;font-size:0.875rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.staging-removing{animation:stagingSlideOut .35s ease-out forwards}
+@keyframes stagingSlideOut{0%{opacity:1;transform:translateX(0)}100%{opacity:0;transform:translateX(100%)}}
 .staging-size{font-size:0.75rem;color:hsl(var(--muted-fg));flex-shrink:0}
 .staging-actions{display:flex;justify-content:flex-end;gap:0.75rem}
 

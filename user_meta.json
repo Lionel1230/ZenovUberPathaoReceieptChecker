@@ -5,14 +5,23 @@
       "April": 999.0,
       "November": 9.0,
       "March": 513.3,
-      "January": 600.0
+      "January": 600.0,
+      "December": 99.0
     },
     "profile_pic": true
   },
   "user": {
     "total_bills": {
       "June": 500.0,
-      "January": 698.0
+      "January": 99.0,
+      "November": 690.0,
+      "December": 500.0,
+      "July": 999.0
+    }
+  },
+  "jakaria": {
+    "total_bills": {
+      "December": 888.0
     }
   }
 }

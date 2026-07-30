@@ -7,6 +7,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import secrets
 import shutil
 import threading
@@ -25,7 +26,8 @@ from jobs import JobStatus, job_store
 
 load_dotenv()
 
-BASE_DIR = Path(__file__).resolve().parent
+_test_dir = os.environ.get("TEST_DATA_DIR")
+BASE_DIR = Path(_test_dir) if _test_dir else Path(__file__).resolve().parent
 LOGS_DIR = BASE_DIR / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
@@ -47,7 +49,9 @@ USERS_FILE = BASE_DIR / "users.txt"
 CLEANUP_TOGGLE_FILE = BASE_DIR / "cleanup_enabled.txt"
 SITE_CONFIG_FILE = BASE_DIR / "site_config.json"
 REG_REQUESTS_FILE = BASE_DIR / "registration_requests.json"
+ALL_HASHES_FILE = BASE_DIR / "all_hashes.json"
 ADMIN_ROLES = {"root", "admin", "IT"}
+VERDICT_FOLDERS = ("Real", "Manual Checks Required")
 
 UPLOAD_ROOT.mkdir(exist_ok=True)
 
@@ -60,6 +64,8 @@ app = Flask(__name__)
 app.jinja_env.auto_reload = True
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE * MAX_FILES
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
 
 @app.before_request
@@ -115,6 +121,31 @@ def _file_sha1(path: Path) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _load_all_hashes() -> dict:
+    if ALL_HASHES_FILE.exists():
+        try:
+            return json.loads(ALL_HASHES_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_all_hashes(hashes: dict) -> None:
+    ALL_HASHES_FILE.write_text(json.dumps(hashes, indent=2), encoding="utf-8")
+
+
+def _add_hashes(hashes: dict, sha1_list: list[str], username: str, month: str, filenames: list[str]) -> dict:
+    now = datetime.now(tz=None).isoformat()
+    for sha1, fname in zip(sha1_list, filenames):
+        if sha1 not in hashes:
+            hashes[sha1] = {
+                "first_seen": now,
+                "origin": {"username": username, "month": month, "filename": fname},
+            }
+    _save_all_hashes(hashes)
+    return hashes
 
 
 def _result_to_dict(result) -> dict:
@@ -177,6 +208,7 @@ def login():
         password = request.form.get("password", "")
         users = _load_users()
         if users.get(username) == password:
+            session.permanent = True
             session["authenticated"] = True
             session["username"] = username
             return redirect(url_for("index"))
@@ -250,11 +282,17 @@ if not _default_avatar.exists():
 
 
 @app.route("/api/profile-pic/<username>", methods=["GET"])
+@login_required
 def get_profile_pic(username: str):
     if username == "default":
         return flask.send_file(str(_default_avatar), mimetype="image/svg+xml")
+    if not re.match(r"^[a-zA-Z0-9_.-]+$", username):
+        return flask.send_file(str(_default_avatar), mimetype="image/svg+xml")
     for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"):
         pic = PROFILE_PIC_DIR / f"{username}{ext}"
+        pic = pic.resolve()
+        if not str(pic).startswith(str(PROFILE_PIC_DIR.resolve())):
+            continue
         if pic.exists():
             mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml"}
             return flask.send_file(str(pic), mimetype=mime.get(ext[1:], "image/png"))
@@ -265,6 +303,8 @@ def get_profile_pic(username: str):
 @login_required
 def upload_profile_pic():
     username = session.get("username", "")
+    if not re.match(r"^[a-zA-Z0-9_.-]+$", username):
+        return jsonify({"error": "Invalid username"}), 400
     if "profile_pic" not in request.files:
         return jsonify({"error": "No file provided"}), 400
     file = request.files["profile_pic"]
@@ -294,36 +334,10 @@ def get_billing():
     username = session.get("username", "")
     if username in ADMIN_ROLES:
         return jsonify({"entries": [], "total_bills": {}})
-    user_dir = UPLOAD_ROOT / "submissions" / username
-    entries = []
     meta = _load_user_meta()
     user_meta = meta.get(username, {})
     total_bills = user_meta.get("total_bills", {})
-    if user_dir.exists():
-        for month_dir in sorted(user_dir.iterdir()):
-            if not month_dir.is_dir() or month_dir.name not in VALID_MONTHS:
-                continue
-            month_name = month_dir.name
-            for verdict_folder in ("Real", "Fake"):
-                folder = month_dir / verdict_folder
-                if not folder.exists():
-                    continue
-                for f in sorted(folder.iterdir()):
-                    if f.is_file() and f.suffix.lower() == ".pdf":
-                        entries.append({
-                            "month": month_name,
-                            "filename": f.name,
-                            "folder": verdict_folder,
-                        })
-    month_file_counts: dict[str, int] = {}
-    for e in entries:
-        month_file_counts[e["month"]] = month_file_counts.get(e["month"], 0) + 1
-    for e in entries:
-        m = e["month"]
-        bill = total_bills.get(m, 0)
-        count = month_file_counts.get(m, 1)
-        e["amount"] = round(bill / count, 2) if bill > 0 and count > 0 else 0
-    return jsonify({"entries": entries, "total_bills": total_bills})
+    return jsonify({"total_bills": total_bills})
 
 
 @app.route("/api/billing/total", methods=["PUT"])
@@ -432,6 +446,32 @@ def create_user():
     _save_user(username, password)
     logger.info("User '%s' created by '%s'", username, session.get("username"))
     return jsonify({"message": f"User '{username}' created"}), 201
+
+
+@app.route("/api/users/all", methods=["DELETE"])
+@login_required
+def delete_all_users():
+    if session.get("username") != "IT":
+        return jsonify({"error": "Forbidden"}), 403
+
+    current = session.get("username", "")
+    lines = USERS_FILE.read_text().splitlines()
+    kept = []
+    deleted = 0
+    for l in lines:
+        l_stripped = l.strip()
+        if not l_stripped or l_stripped.startswith("#"):
+            kept.append(l)
+            continue
+        parts = l_stripped.split(":", 1)
+        uname = parts[0].strip()
+        if uname in ADMIN_ROLES:
+            kept.append(l)
+        else:
+            deleted += 1
+    USERS_FILE.write_text("\n".join(kept) + ("\n" if kept else ""))
+    logger.info("All users deleted by IT — %d user(s) removed, admin accounts kept", deleted)
+    return jsonify({"message": f"{deleted} user(s) deleted (admin accounts kept)"})
 
 
 @app.route("/api/users/<username>", methods=["DELETE"])
@@ -556,6 +596,16 @@ def delete_reg_request():
     return jsonify({"message": "Request removed"})
 
 
+@app.route("/api/admin/registration-requests/all", methods=["DELETE"])
+@login_required
+def delete_all_reg_requests():
+    if session.get("username") not in ADMIN_ROLES:
+        return jsonify({"error": "Forbidden"}), 403
+    _save_reg_requests([])
+    logger.info("All registration requests deleted by '%s'", session.get("username"))
+    return jsonify({"message": "All registration requests deleted"})
+
+
 @app.route("/")
 @login_required
 def index():
@@ -664,7 +714,7 @@ def upload_files():
         job_store.update(job.id, status=JobStatus.FAILED, error=str(exc))
         if upload_dir.exists():
             shutil.rmtree(upload_dir, ignore_errors=True)
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.errorhandler(413)
@@ -718,10 +768,8 @@ def submit_files():
         return jsonify({"error": f"Files too large (max {MAX_FILE_SIZE // (1024*1024)} MB): {names}"}), 400
 
     user_dir = UPLOAD_ROOT / "submissions" / username / month
-    real_dir = user_dir / "Real"
-    fake_dir = user_dir / "Fake"
-    real_dir.mkdir(parents=True, exist_ok=True)
-    fake_dir.mkdir(parents=True, exist_ok=True)
+    for _folder in VERDICT_FOLDERS:
+        (user_dir / _folder).mkdir(parents=True, exist_ok=True)
 
     saved = []
     for idx, file in enumerate(valid_pdfs):
@@ -759,8 +807,27 @@ def submit_files():
         except Exception:
             existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "Analysis failed", "sha1": sha1}
 
-        verdict = existing_results[safe_name].get("verdict", "unknown")
-        target_dir = real_dir if verdict == "real" else fake_dir
+    results_path.write_text(json.dumps(existing_results, indent=2), encoding="utf-8")
+
+    all_hashes = _load_all_hashes()
+    _add_hashes(all_hashes, list(new_sha1s.values()), username, month, list(new_sha1s.keys()))
+
+    sha1_counts = {}
+    for info in existing_results.values():
+        s = info.get("sha1", "")
+        if s:
+            sha1_counts[s] = sha1_counts.get(s, 0) + 1
+    duplicate_sha1s = {sha1 for sha1, count in sha1_counts.items() if count > 1}
+
+    verdict_to_folder = {"real": "Real"}
+    for safe_name, dest in saved:
+        sha1 = new_sha1s.get(safe_name, "")
+        if sha1 in duplicate_sha1s:
+            folder_name = "Manual Checks Required"
+        else:
+            verdict = existing_results.get(safe_name, {}).get("verdict", "unknown")
+            folder_name = verdict_to_folder.get(verdict, "Manual Checks Required")
+        target_dir = user_dir / folder_name
         final_dest = target_dir / dest.name
         counter = 1
         while final_dest.exists():
@@ -769,14 +836,7 @@ def submit_files():
             counter += 1
         dest.rename(final_dest)
 
-    results_path.write_text(json.dumps(existing_results, indent=2), encoding="utf-8")
-
-    sha1_counts = {}
-    for info in existing_results.values():
-        s = info.get("sha1", "")
-        if s:
-            sha1_counts[s] = sha1_counts.get(s, 0) + 1
-    duplicate_files = [name for name, sha1 in new_sha1s.items() if sha1_counts.get(sha1, 0) > 1]
+    duplicate_files = [s for s, _ in saved if new_sha1s.get(s, "") in duplicate_sha1s]
 
     logger.info("User '%s' submitted %d files", username, len(saved))
     return jsonify({"message": f"{len(saved)} file(s) submitted successfully", "files": [s for s, _ in saved], "duplicate_files": duplicate_files})
@@ -792,20 +852,16 @@ def check_duplicates():
     data = request.get_json(silent=True) or {}
     hashes = data.get("hashes", [])
 
-    user_dir = UPLOAD_ROOT / "submissions" / username
-    results_path = user_dir / "_results.json"
-    if not results_path.exists():
-        return jsonify({"duplicates": []})
-
-    try:
-        results = json.loads(results_path.read_text(encoding="utf-8"))
-    except Exception:
-        return jsonify({"duplicates": []})
-
-    existing_sha1s = {info.get("sha1", "") for info in results.values() if info.get("sha1")}
+    all_hashes = _load_all_hashes()
+    existing_sha1s = set(all_hashes.keys())
     duplicates = [h for h in hashes if h in existing_sha1s]
+    info = {}
+    for h in duplicates:
+        entry = all_hashes.get(h, {})
+        origin = entry.get("origin", {})
+        info[h] = origin
     logger.info("check_duplicates user=%s incoming=%d existing=%d dupes=%d", username, len(hashes), len(existing_sha1s), len(duplicates))
-    return jsonify({"duplicates": duplicates})
+    return jsonify({"duplicates": duplicates, "duplicate_info": info})
 
 
 @app.route("/api/my-submissions", methods=["GET"])
@@ -824,7 +880,7 @@ def my_submissions():
     for month_name in sorted(user_dir.iterdir()):
         if not month_name.is_dir() or month_name.name not in VALID_MONTHS:
             continue
-        for verdict_folder in ("Real", "Fake"):
+        for verdict_folder in VERDICT_FOLDERS:
             folder = month_name / verdict_folder
             if not folder.exists():
                 continue
@@ -858,7 +914,7 @@ def delete_my_submission(month: str, filename: str):
     safe = secure_filename(filename)
     user_dir = UPLOAD_ROOT / "submissions" / username / month
     file_path = None
-    for folder in ("Real", "Fake"):
+    for folder in VERDICT_FOLDERS:
         candidate = user_dir / folder / safe
         if candidate.exists():
             file_path = candidate
@@ -895,7 +951,7 @@ def admin_uploads():
                 for month_dir in sorted(user_dir.iterdir(), key=lambda d: month_order.get(d.name, 99)):
                     if not month_dir.is_dir() or month_dir.name not in VALID_MONTHS:
                         continue
-                    for verdict_folder in ("Real", "Fake"):
+                    for verdict_folder in VERDICT_FOLDERS:
                         folder = month_dir / verdict_folder
                         if folder.exists():
                             for f in sorted(folder.iterdir()):
@@ -973,7 +1029,7 @@ def admin_delete_upload(username: str, month: str, filename: str):
     safe = secure_filename(filename)
     user_dir = UPLOAD_ROOT / "submissions" / username / month
     file_path = None
-    for folder in ("Real", "Fake"):
+    for folder in VERDICT_FOLDERS:
         candidate = user_dir / folder / safe
         if candidate.exists():
             file_path = candidate
@@ -1094,6 +1150,35 @@ def run_cleanup():
     if errors:
         return jsonify({"error": f"Could not delete {len(errors)} file(s): {', '.join(errors[:5])}"}), 500
     return jsonify({"deleted": 0})
+
+
+@app.route("/api/admin/clear-cache", methods=["POST"])
+@login_required
+def clear_cache():
+    if session.get("username") != "IT":
+        return jsonify({"error": "Forbidden"}), 403
+
+    removed = 0
+    if UPLOAD_ROOT.exists():
+        for item in list(UPLOAD_ROOT.iterdir()):
+            if item.name != "submissions" and item.is_dir():
+                try:
+                    shutil.rmtree(item, ignore_errors=True)
+                    removed += 1
+                except Exception:
+                    pass
+    logger.info("Cache cleared by IT — %d temp dir(s) removed", removed)
+    return jsonify({"message": f"Cache cleared — {removed} temp director(ies) removed"})
+
+
+@app.route("/api/admin/clear-hashes", methods=["POST"])
+@login_required
+def clear_hashes():
+    if session.get("username") != "IT":
+        return jsonify({"error": "Forbidden"}), 403
+    _save_all_hashes({})
+    logger.info("All hash records cleared by IT")
+    return jsonify({"message": "All hash records cleared"})
 
 
 @app.route("/api/logs", methods=["GET"])

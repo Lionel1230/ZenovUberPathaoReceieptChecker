@@ -109,7 +109,7 @@
                 <option value="December">December</option>
               </select>
               <span class="total-bill-label" style="margin-left:auto">৳</span>
-              <input class="input" type="number" id="monthBillInput" placeholder="Total bill for this month" min="0" step="0.01" style="max-width:10rem" />
+              <input class="input" type="number" id="monthBillInput" placeholder="Total for month" min="0" step="0.01" style="max-width:10rem" />
               <button class="btn btn-default btn-sm" id="setMonthBillBtn">Set</button>
             </div>
             <div class="staging-list" id="stagingList"></div>
@@ -204,6 +204,8 @@
             <input class="input" id="uploadsSearch" type="text" placeholder="Search by username..." style="max-width:20rem" />
           </div>
           <div id="uploadsModalList"></div>
+          <button class="btn btn-destructive btn-sm hidden" id="clearCacheBtn" style="margin-top:1rem">Clear Cache</button>
+          <button class="btn btn-destructive btn-sm hidden" id="clearHashesBtn" style="margin-top:1rem;margin-left:0.5rem">Clear All Hashes</button>
           <div class="separator hidden" id="logsDivider"></div>
           <h3 class="h3 hidden" style="margin-bottom:0.75rem" id="logsTitle">Recent Logs</h3>
           <div class="logs-viewer hidden" id="logsViewer">Loading...</div>
@@ -232,9 +234,10 @@
             </div>
           </div>
           <div class="separator"></div>
-          <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
-            <input class="input" id="usersSearch" type="text" placeholder="Search by username..." style="max-width:20rem" />
+          <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap">
+            <input class="input" id="usersSearch" type="text" placeholder="Search by username..." style="max-width:20rem;flex:1" />
             <button class="btn btn-outline btn-sm" id="togglePasswordsBtn">Show Passwords</button>
+            <button class="btn btn-destructive btn-sm hidden" id="deleteAllUsersBtn">Delete All Users</button>
           </div>
           <div class="user-list" id="userList"></div>
         </div>
@@ -247,12 +250,33 @@
             <h2 class="dialog-title">Registration Requests</h2>
             <button class="dialog-close" id="closeRegRequests" title="Close">&times;</button>
           </div>
-          <div style="margin-bottom:0.5rem">
-            <input class="input" id="requestsSearch" type="text" placeholder="Search by name, team or email..." style="max-width:24rem" />
-          </div>
-          <div id="regRequestsList"></div>
+            <div style="margin-bottom:0.5rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+              <input class="input" id="requestsSearch" type="text" placeholder="Search by name, team or email..." style="max-width:24rem;flex:1" />
+              <button class="btn btn-destructive btn-sm" id="deleteAllRegBtn" title="Delete all requests">Delete All</button>
+            </div>
+            <div id="regRequestsList"></div>
         </div>
       </div>
+
+      <!-- Duplicate Detection Popup -->
+      <div class="dialog-overlay hidden" id="duplicateOverlay">
+        <div class="dialog-content" id="duplicateModal" style="max-width:28rem;border-top:4px solid hsl(var(--destructive))">
+          <div class="dialog-header">
+            <h2 class="dialog-title" style="color:hsl(var(--destructive))">Duplicate Detected</h2>
+            <button class="dialog-close" id="duplicateCloseBtn" title="Close">&times;</button>
+          </div>
+          <p style="margin:0.5rem 0"><strong>Do not submit</strong> &mdash; the following file(s) have already been uploaded by another user:</p>
+          <ul id="duplicateFileList" style="color:hsl(var(--destructive));font-weight:600;margin:0.75rem 0"></ul>
+          <p style="margin:0.5rem 0">They have been <strong>removed</strong> from your selection.</p>
+          <button class="btn btn-default" id="duplicateCloseBtn2" style="margin-top:0.75rem">OK</button>
+        </div>
+      </div>
+      <script>
+        document.addEventListener("DOMContentLoaded", function() {
+          var btn2 = document.getElementById("duplicateCloseBtn2");
+          if (btn2) btn2.addEventListener("click", function() { document.getElementById("duplicateOverlay").classList.add("hidden"); });
+        });
+      </script>
 
       <!-- Site Settings Modal -->
       <div class="dialog-overlay hidden" id="siteSettingsOverlay">
@@ -291,7 +315,7 @@
   </div>
 
   <script>
-    window.__CURRENT_USER = "{{ session.get('username', '') }}";
+    window.__CURRENT_USER = {{ session.get('username', '')|tojson }};
   </script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

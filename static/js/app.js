@@ -24,7 +24,7 @@
   let stagedFiles = [];
 
   let userData = {};
-  console.log("DEBUG currentUser:", JSON.stringify(currentUser), "isAdmin:", isAdmin);
+  // No debug log in production
 
   async function initUI() {
     await loadSiteConfig();
@@ -99,6 +99,28 @@
     if (el.classList.contains("removing")) return;
     el.classList.add("removing");
     el.addEventListener("animationend", function () { el.remove(); });
+  }
+
+  /* ─── duplicate popup ─── */
+  function showDuplicatePopup(filenames) {
+    var overlay = document.getElementById("duplicateOverlay");
+    if (!overlay) return;
+    var list = document.getElementById("duplicateFileList");
+    if (list) {
+      list.innerHTML = filenames.map(function (n) {
+        return '<li>' + escapeHtml(n) + '</li>';
+      }).join("");
+    }
+    var count = document.getElementById("duplicateCount");
+    if (count) count.textContent = filenames.length;
+    overlay.classList.remove("hidden");
+    var closeBtn = document.getElementById("duplicateCloseBtn");
+    if (closeBtn) {
+      closeBtn.onclick = function () { overlay.classList.add("hidden"); };
+    }
+    overlay.onclick = function (e) {
+      if (e.target === overlay) overlay.classList.add("hidden");
+    };
   }
 
   /* ─── UI toggle: User vs Admin ─── */
@@ -247,6 +269,47 @@
     }
   }
 
+  async function computeFileSha1(file) {
+    var buffer = await file.arrayBuffer();
+    var hashBuffer = await crypto.subtle.digest("SHA-1", buffer);
+    var hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  }
+
+  async function checkStagedDuplicates() {
+    if (stagedFiles.length === 0) return;
+    var hashes = await Promise.all(stagedFiles.map(function (f) { return computeFileSha1(f); }));
+    try {
+      var res = await fetch("/api/check-duplicates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hashes: hashes }),
+      });
+      if (!res.ok) return;
+      var data = await res.json();
+      if (data.duplicates && data.duplicates.length > 0) {
+        var dupSet = new Set(data.duplicates);
+        var removeIndices = [];
+        hashes.forEach(function (h, i) {
+          if (dupSet.has(h)) removeIndices.push(i);
+        });
+        if (removeIndices.length > 0) {
+          var dupNames = removeIndices.map(function (i) { return stagedFiles[i].name; });
+          showDuplicatePopup(dupNames);
+          removeIndices.sort(function (a, b) { return b - a; }).forEach(function (i) {
+            var item = stagingList.querySelectorAll(".staging-item")[i];
+            if (item) { item.classList.add("staging-removing"); }
+          });
+          await new Promise(function (r) { setTimeout(r, 400); });
+          removeIndices.sort(function (a, b) { return b - a; }).forEach(function (i) {
+            stagedFiles.splice(i, 1);
+          });
+          renderStaging();
+        }
+      }
+    } catch (_) {}
+  }
+
   function addFilesToStaging(files) {
     files.forEach(function (f) {
       if (!stagedFiles.some(function (s) { return s.name === f.name && s.size === f.size; })) {
@@ -254,6 +317,7 @@
       }
     });
     renderStaging();
+    checkStagedDuplicates();
   }
 
   function renderStaging() {
@@ -419,7 +483,7 @@
     var parts = [];
     if (r.producer) parts.push("Producer: " + escapeHtml(r.producer));
     if (r.creator) parts.push("Creator: " + escapeHtml(r.creator));
-    if (r.matched_keywords.length) parts.push("Matched: " + r.matched_keywords.join(", "));
+    if (r.matched_keywords.length) parts.push("Matched: " + escapeHtml(r.matched_keywords.join(", ")));
     if (r.error_message) parts.push(escapeHtml(r.error_message));
     return parts.join(" . ") || "No metadata keywords found";
   }
@@ -429,7 +493,7 @@
   /* --- empty state --- */
   function emptyStateHtml(msg, icon) {
     icon = icon || "";
-    return '<div class="empty-state"><div class="empty-state-icon">' + icon + '</div><div class="empty-state-text">' + msg + '</div></div>';
+    return '<div class="empty-state"><div class="empty-state-icon">' + escapeHtml(icon) + '</div><div class="empty-state-text">' + escapeHtml(msg) + '</div></div>';
   }
 
   /* --- skeleton --- */
@@ -571,6 +635,38 @@
     try { var res = await fetch("/api/users/" + encodeURIComponent(username), { method: "DELETE" }); var data = await res.json(); if (res.ok) { showToast(data.message || "User deleted", "success"); loadUserList(); } else { showToast(data.error || "Delete failed"); } } catch (_) { showToast("Network error"); }
   }
 
+  function beep() {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 800;
+      osc.type = "sine";
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+    } catch (_) {}
+  }
+
+  async function deleteAllUsers() {
+    var prompts = ["Type CONFIRM to delete ALL users: ", "Are you ABSOLUTELY sure? Type CONFIRM: ", "FINAL WARNING \u2014 this cannot be undone. Type CONFIRM: "];
+    for (var i = 0; i < 3; i++) {
+      beep();
+      var response = prompt(prompts[i]);
+      if (response !== "CONFIRM") { showToast("Deletion cancelled"); return; }
+    }
+    beep();
+    try {
+      var res = await fetch("/api/users/all", { method: "DELETE" });
+      var data = await res.json();
+      if (res.ok) { showToast(data.message || "All users deleted", "success"); loadUserList(); }
+      else { showToast(data.error || "Delete failed"); }
+    } catch (_) { showToast("Network error"); }
+  }
+
   /* --- My Submissions --- */
   async function loadMySubmissions() {
     if (isAdmin) return;
@@ -652,37 +748,25 @@
       var res = await fetch("/api/billing");
       if (!res.ok) return;
       var data = await res.json();
-      if (!data.entries || data.entries.length === 0) {
-        list.innerHTML = emptyStateHtml("No billing entries yet. Submit PDFs first.");
+      var totalBills = data.total_bills || {};
+      var monthOrder = ["December","November","October","September","August","July","June","May","April","March","February","January"];
+      var hasAny = monthOrder.some(function (m) { return totalBills[m] > 0; });
+      if (!hasAny) {
+        list.innerHTML = emptyStateHtml("No billing entries yet. Set a total bill for a month to get started.");
         return;
       }
       var html = "";
-      var monthOrder = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-      var byMonth = {};
-      data.entries.forEach(function (e) {
-        if (!byMonth[e.month]) byMonth[e.month] = [];
-        byMonth[e.month].push(e);
-      });
       var grandTotal = 0;
       monthOrder.forEach(function (m) {
-        var entries = byMonth[m];
-        if (!entries) return;
-        var monthTotal = data.total_bills && data.total_bills[m] ? data.total_bills[m] : 0;
-        grandTotal += monthTotal;
+        var bill = totalBills[m] || 0;
+        if (bill <= 0) return;
+        grandTotal += bill;
         html += '<div class="month-group">' +
           '<div class="month-group-header"><span class="badge badge-outline month-badge">' + m + '</span>' +
-          (monthTotal > 0 ? ' <span class="badge badge-default month-badge" style="margin-left:0.375rem">Total: ৳' + monthTotal.toFixed(2) + '</span>' : '') +
-          '</div>';
-        entries.forEach(function (e) {
-          html += '<div class="bill-row">' +
-            '<span>' + escapeHtml(e.filename) + '</span>' +
-            '<span>' + (e.amount ? "৳" + e.amount.toFixed(2) : "—") + '</span>' +
-            '</div>';
-        });
-        html += '</div>';
+          ' <span class="badge badge-default month-badge" style="margin-left:0.375rem">Total: \u09F3' + bill.toFixed(2) + '</span></div></div>';
       });
       if (grandTotal > 0) {
-        html += '<div class="bill-row bill-total"><span>Grand Total</span><span>৳' + grandTotal.toFixed(2) + '</span></div>';
+        html += '<div class="bill-row bill-total"><span>Grand Total</span><span>\u09F3' + grandTotal.toFixed(2) + '</span></div>';
       }
       list.innerHTML = html;
     } catch (_) { list.innerHTML = emptyStateHtml("Failed to load billing"); }
@@ -908,6 +992,36 @@
     try { var res = await fetch("/api/admin/registration-requests", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ gmail: gmail }) }); var data = await res.json(); if (res.ok) { showToast(data.message || "Request removed", "success"); loadRegRequests(); } else { showToast(data.error || "Failed to remove"); } } catch (_) { showToast("Network error"); }
   }
 
+  async function deleteAllRegRequests() {
+    if (!confirm("Delete ALL registration requests? This cannot be undone.")) return;
+    try {
+      var res = await fetch("/api/admin/registration-requests/all", { method: "DELETE" });
+      var data = await res.json();
+      if (res.ok) { showToast(data.message || "All requests deleted", "success"); loadRegRequests(); }
+      else { showToast(data.error || "Failed to delete all"); }
+    } catch (_) { showToast("Network error"); }
+  }
+
+  async function clearCache() {
+    if (!confirm("Clear all cached upload data? This removes temporary files left from previous analyses.")) return;
+    try {
+      var res = await fetch("/api/admin/clear-cache", { method: "POST" });
+      var data = await res.json();
+      if (res.ok) { showToast(data.message || "Cache cleared", "success"); }
+      else { showToast(data.error || "Failed to clear cache"); }
+    } catch (_) { showToast("Network error"); }
+  }
+
+  async function clearAllHashes() {
+    if (!confirm("Clear ALL stored file hashes? This will disable duplicate detection until new files are submitted.")) return;
+    try {
+      var res = await fetch("/api/admin/clear-hashes", { method: "POST" });
+      var data = await res.json();
+      if (res.ok) { showToast(data.message || "All hashes cleared", "success"); }
+      else { showToast(data.error || "Failed to clear hashes"); }
+    } catch (_) { showToast("Network error"); }
+  }
+
   /* --- Site Settings --- */
   async function loadSiteSettingsForm() {
     try { var res = await fetch("/api/site-config"); if (!res.ok) return; var data = await res.json(); document.getElementById("dailyQuoteInput").value = data.daily_quote || ""; document.getElementById("maintenanceInput").value = data.maintenance_message || ""; } catch (_) {}
@@ -943,10 +1057,11 @@
       var res = await fetch("/api/logs");
       if (!res.ok) return;
       var data = await res.json();
-      var viewer = document.getElementById("adminLogsViewer");
+      var viewer = document.getElementById("logsViewer");
+      if (!viewer) return;
       viewer.textContent = data.logs || "No logs yet";
       viewer.scrollTop = viewer.scrollHeight;
-    } catch (_) { document.getElementById("adminLogsViewer").textContent = "Failed to load logs"; }
+    } catch (_) { var v = document.getElementById("logsViewer"); if (v) v.textContent = "Failed to load logs"; }
   }
 
 
@@ -963,7 +1078,8 @@
 
   /* --- Logs --- */
   async function loadAdminLogs() {
-    var viewer = document.getElementById("adminLogsViewer");
+    var viewer = document.getElementById("logsViewer");
+    if (!viewer) return;
     viewer.innerHTML = skeletonHtml(12, "text");
     try {
       var res = await fetch("/api/logs");
@@ -987,7 +1103,11 @@
   onId("refreshMySubmissionsBtn", "click", loadMySubmissions);
   onId("cleanupToggle", "change", toggleCleanup);
   onId("runCleanupBtn", "click", runCleanup);
-  onId("manageUsersBtn", "click", function () { openDialog(document.getElementById("userModalOverlay")); loadUserList(); });
+  onId("deleteAllRegBtn", "click", deleteAllRegRequests);
+  onId("deleteAllUsersBtn", "click", deleteAllUsers);
+  onId("clearCacheBtn", "click", clearCache);
+  onId("clearHashesBtn", "click", clearAllHashes);
+  onId("manageUsersBtn", "click", function () { openDialog(document.getElementById("userModalOverlay")); loadUserList(); document.getElementById("deleteAllUsersBtn").classList.toggle("hidden", currentUser !== "IT"); });
   onId("closeUserModal", "click", function () { closeDialog(document.getElementById("userModalOverlay")); });
   onId("userModalOverlay", "click", function (e) { if (e.target === this) closeDialog(document.getElementById("userModalOverlay")); });
   onId("createUserBtn", "click", createUser);
@@ -998,7 +1118,7 @@
     btn.textContent = show ? "Hide Passwords" : "Show Passwords";
     document.querySelectorAll("#userList .user-password-input").forEach(function (inp) { inp.type = show ? "text" : "password"; });
   });
-  onId("uploadsBtn", "click", function () { openDialog(document.getElementById("uploadsModalOverlay")); loadUploadsModal(); loadCleanupStatus(); var isIT = currentUser === "IT"; document.getElementById("logsDivider").classList.toggle("hidden", !isIT); document.getElementById("logsTitle").classList.toggle("hidden", !isIT); document.getElementById("logsViewer").classList.toggle("hidden", !isIT); if (isIT) loadLogs(); });
+  onId("uploadsBtn", "click", function () { openDialog(document.getElementById("uploadsModalOverlay")); loadUploadsModal(); loadCleanupStatus(); var isIT = currentUser === "IT"; document.getElementById("logsDivider").classList.toggle("hidden", !isIT); document.getElementById("logsTitle").classList.toggle("hidden", !isIT); document.getElementById("logsViewer").classList.toggle("hidden", !isIT); document.getElementById("clearCacheBtn").classList.toggle("hidden", !isIT); document.getElementById("clearHashesBtn").classList.toggle("hidden", !isIT); if (isIT) loadLogs(); });
   onId("closeUploadsModal", "click", function () { closeDialog(document.getElementById("uploadsModalOverlay")); });
   onId("uploadsModalOverlay", "click", function (e) { if (e.target === this) closeDialog(document.getElementById("uploadsModalOverlay")); });
   onId("regRequestsBtn", "click", function () { openDialog(document.getElementById("regRequestsOverlay")); loadRegRequests(); });
