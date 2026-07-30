@@ -111,8 +111,10 @@
     var profile = document.getElementById("profileSection");
     var userTabs = document.getElementById("userTabs");
     var adminTabs = document.getElementById("adminTabs");
+    var adminBtns = ["manageUsersBtn", "uploadsBtn", "regRequestsBtn", "siteSettingsBtn"];
 
     if (isAdm) {
+      adminBtns.forEach(function (id) { var el = document.getElementById(id); if (el) el.classList.remove("hidden"); });
       if (profile) profile.classList.add("hidden");
       if (userTabs) userTabs.classList.add("hidden");
       document.getElementById("tab-billing").classList.add("hidden");
@@ -124,6 +126,7 @@
       if (logsTab) logsTab.classList.toggle("hidden", currentUser !== "IT");
       switchAdminTab("uploads");
     } else {
+      adminBtns.forEach(function (id) { var el = document.getElementById(id); if (el) el.classList.add("hidden"); });
       if (profile) profile.classList.remove("hidden");
       if (userTabs) userTabs.classList.remove("hidden");
       if (adminTabs) adminTabs.classList.add("hidden");
@@ -259,7 +262,7 @@
       return '<div class="staging-item">' +
         '<span class="staging-name" title="' + escapeHtml(f.name) + '">' + escapeHtml(f.name) + '</span>' +
         '<span class="staging-size">' + (f.size / (1024 * 1024)).toFixed(2) + ' MB</span>' +
-        '<button class="btn btn-ghost btn-icon btn-sm" data-remove="' + i + '" title="Remove" style="color:hsl(var(--destructive))">&times;</button>' +
+        '<button class="btn btn-ghost btn-icon btn-sm" data-remove="' + i + '" title="Remove" style="color:hsl(var(--destructive));font-size:0.5em">&times;</button>' +
         '</div>';
     }).join("");
     stagingList.querySelectorAll("[data-remove]").forEach(function (btn) {
@@ -524,7 +527,7 @@
           '<span class="user-name">' + escapeHtml(u.username) + "</span>" +
           "</div>" +
           (showPasswords && u.password ? '<span class="user-password">' + escapeHtml(u.password) + "</span>" : "") +
-          (u.username !== "root" && u.username !== currentUser ? '<button class="btn btn-ghost btn-icon btn-sm" data-delete="' + escapeHtml(u.username) + '" title="Delete user" style="color:hsl(var(--destructive))">&times;</button>' : "") +
+          (u.username !== "root" && u.username !== currentUser ? '<button class="btn btn-ghost btn-icon btn-sm" data-delete="' + escapeHtml(u.username) + '" title="Delete user" style="color:hsl(var(--destructive));font-size:0.5em">&times;</button>' : "") +
           "</div>";
       }).join("");
       list.querySelectorAll("[data-delete]").forEach(function (btn) { btn.addEventListener("click", function () { deleteUser(btn.dataset.delete); }); });
@@ -754,6 +757,7 @@
 
   async function loadUploadsAdminList() {
     var list = document.getElementById("uploadsAdminList");
+    if (!list) return;
     if (!document.getElementById("adminUploadsSearch")) {
       var wrapper = document.createElement("div");
       wrapper.style.marginBottom = "0.75rem";
@@ -769,6 +773,7 @@
       if (!res.ok) return;
       var data = await res.json();
       if (data.users.length === 0) { list.innerHTML = emptyStateHtml("No submissions yet", ""); return; }
+      data.users.sort(function (a, b) { return (a.count === 0 ? 0 : 1) - (b.count === 0 ? 0 : 1); });
       list.innerHTML = data.users.map(function (u) {
         return '<div class="admin-user-card' + (u.count === 0 ? " no-uploads" : "") + '">' +
           '<div class="admin-user-header">' +
@@ -833,17 +838,16 @@
       if (data.requests.length === 0) { list.innerHTML = emptyStateHtml("No requests yet", ""); return; }
       list.innerHTML = data.requests.map(function (r) {
         return '<div class="reg-request-card">' +
-          '<div class="reg-request-header">' +
-          '<span class="reg-request-name">' + escapeHtml(r.name) + "</span>" +
-          '<button class="btn btn-ghost btn-icon btn-sm" data-delete-reg="' + escapeHtml(r.gmail) + '" title="Remove" style="color:hsl(var(--destructive))">&times;</button>' +
-          "</div>" +
-          '<div class="reg-request-details">' +
-          '<span class="reg-request-team">' + escapeHtml(r.team) + "</span>" +
-          '<span class="reg-request-gmail">' + escapeHtml(r.gmail) + "</span>" +
-          '<button class="reg-request-copy" data-copy="' + escapeHtml(r.gmail) + '" title="Copy email">?</button>' +
-          "</div></div>";
+          '<span class="reg-request-name">' + escapeHtml(r.name) + '</span>' +
+          '<span class="reg-request-divider">|</span>' +
+          '<span class="reg-request-team">' + escapeHtml(r.team) + '</span>' +
+          '<span class="reg-request-divider">|</span>' +
+          '<span class="reg-request-gmail">' + escapeHtml(r.gmail) + '</span>' +
+          '<button class="reg-request-copy" data-copy="' + escapeHtml(r.gmail) + '" title="Copy email">Copy</button>' +
+          '<button class="reg-request-remove" data-delete-reg="' + escapeHtml(r.gmail) + '" title="Remove">&times;</button>' +
+          "</div>";
       }).join("");
-      list.querySelectorAll("[data-copy]").forEach(function (btn) { btn.addEventListener("click", function () { navigator.clipboard.writeText(btn.dataset.copy); btn.textContent = "?"; setTimeout(function () { btn.textContent = "?"; }, 1500); }); });
+      list.querySelectorAll("[data-copy]").forEach(function (btn) { btn.addEventListener("click", function () { navigator.clipboard.writeText(btn.dataset.copy); btn.textContent = "Copied!"; setTimeout(function () { btn.textContent = "Copy"; }, 1500); }); });
       list.querySelectorAll("[data-delete-reg]").forEach(function (btn) { btn.addEventListener("click", function () { deleteRegRequest(btn.dataset.deleteReg); }); });
     } catch (_) { list.innerHTML = emptyStateHtml("Failed to load requests"); }
   }
@@ -902,7 +906,7 @@
     if (!confirm("Are you sure? This action cannot be undone.")) return;
     var btn = document.getElementById("runCleanupBtn");
     setLoading(btn, true);
-    try { var res = await fetch("/api/admin/cleanup", { method: "POST" }); if (res.ok) { showToast("All submissions deleted", "success"); loadUploadsAdminList(); } else { var d = await res.json(); showToast(d.error || "Cleanup failed"); } } catch (_) { showToast("Cleanup failed"); }
+    try { var res = await fetch("/api/admin/cleanup", { method: "POST" }); if (res.ok) { showToast("All submissions deleted", "success"); loadUploadsAdminList(); if (document.getElementById("uploadsModalList")) loadUploadsModal(); } else { var d = await res.json(); showToast(d.error || "Cleanup failed"); } } catch (_) { showToast("Cleanup failed"); }
     setLoading(btn, false);
   }
 
