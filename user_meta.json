@@ -6,7 +6,7 @@
       "November": 9.0,
       "March": 513.3,
       "January": 600.0,
-      "December": 99.0
+      "December": 22.0
     },
     "profile_pic": true
   },
@@ -17,6 +17,10 @@
       "November": 690.0,
       "December": 500.0,
       "July": 999.0
+    },
+    "verification": {
+      "verified_December_Receipt_16Jun2026_234243.pdf": null,
+      "verified_July_HNAE26060960_AN_1.pdf": false
     }
   },
   "jakaria": {

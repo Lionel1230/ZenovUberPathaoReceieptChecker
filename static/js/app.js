@@ -815,14 +815,11 @@
             var vLabel = verdictLabel(v);
             var vBadge = badgeClass(v);
             var source = f.producer || f.creator || "";
-            var verifClass = f.verified === true ? "verified" : (f.verified === false ? "malicious" : "unverified");
-            var verifLabel = f.verified === true ? "Verified" : (f.verified === false ? "Malicious" : "Unverified");
             return '<div class="admin-file-row">' +
               (f.month ? '<span class="badge badge-outline" style="font-size:0.65rem;margin-right:0.5rem">' + escapeHtml(f.month) + '</span>' : "") +
               '<span class="admin-file-name">' + escapeHtml(f.name) + "</span>" +
               '<span class="badge ' + vBadge + '" style="font-size:0.7rem">' + vLabel + "</span>" +
               (f.duplicate ? '<span class="badge badge-destructive" style="font-size:0.7rem">Duplicate</span>' : "") +
-              '<button class="verify-btn ' + verifClass + '" data-verify=\'' + escapeHtml(JSON.stringify({user:u.username,month:f.month,name:f.name})) + "' title=\"Toggle verification\">" + verifLabel + "</button>" +
               (source ? '<span class="admin-file-source">' + escapeHtml(source) + "</span>" : "") +
               '<button class="btn-remove" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\">&times;</button>" +
               "</div>";
@@ -831,7 +828,6 @@
       }).join("");
       list.querySelectorAll("[data-modal-delete]").forEach(function (btn) { btn.addEventListener("click", function () { modalDeleteFile(btn.getAttribute("data-modal-delete")); }); });
       list.querySelectorAll("[data-open-folder]").forEach(function (btn) { btn.addEventListener("click", function () { openUserFolder(btn.dataset.openFolder); }); });
-      list.querySelectorAll("[data-verify]").forEach(function (btn) { btn.addEventListener("click", function () { toggleVerification(btn.dataset.verify); }); });
       filterUploadsModal();
     } catch (_) { list.innerHTML = emptyStateHtml("Failed to load uploads"); }
   }
@@ -900,14 +896,11 @@
             var vLabel = verdictLabel(v);
             var vBadge = badgeClass(v);
             var source = f.producer || f.creator || "";
-            var verifClass = f.verified === true ? "verified" : (f.verified === false ? "malicious" : "unverified");
-            var verifLabel = f.verified === true ? "Verified" : (f.verified === false ? "Malicious" : "Unverified");
             return '<div class="admin-file-row">' +
               (f.month ? '<span class="badge badge-outline" style="font-size:0.65rem;margin-right:0.5rem">' + escapeHtml(f.month) + '</span>' : "") +
               '<span class="admin-file-name">' + escapeHtml(f.name) + "</span>" +
               '<span class="badge ' + vBadge + '" style="font-size:0.7rem">' + vLabel + "</span>" +
               (f.duplicate ? '<span class="badge badge-destructive" style="font-size:0.7rem">Duplicate</span>' : "") +
-              '<button class="verify-btn ' + verifClass + '" data-verify=\'' + escapeHtml(JSON.stringify({user:u.username,month:f.month,name:f.name})) + "' title=\"Toggle verification\">" + verifLabel + "</button>" +
               (source ? '<span class="admin-file-source">' + escapeHtml(source) + "</span>" : "") +
               '<button class="btn-remove" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\">&times;</button>" +
               "</div>";
@@ -916,7 +909,6 @@
       }).join("");
       list.querySelectorAll("[data-modal-delete]").forEach(function (btn) { btn.addEventListener("click", function () { modalDeleteFile(btn.getAttribute("data-modal-delete")); }); });
       list.querySelectorAll("[data-open-folder]").forEach(function (btn) { btn.addEventListener("click", function () { openUserFolder(btn.dataset.openFolder); }); });
-      list.querySelectorAll("[data-verify]").forEach(function (btn) { btn.addEventListener("click", function () { toggleVerification(btn.dataset.verify); }); });
       filterAdminUploads();
     } catch (_) { list.innerHTML = emptyStateHtml("Failed to load uploads"); }
   }
@@ -927,16 +919,6 @@
   }
 
   async function openUserFolder(username) { try { await fetch("/api/admin/open-folder/" + encodeURIComponent(username)); } catch (_) {} }
-
-  async function toggleVerification(jsonStr) {
-    var info;
-    try { info = JSON.parse(jsonStr); } catch (_) { return; }
-    try {
-      var res = await fetch("/api/admin/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: info.user, month: info.month, filename: info.name }) });
-      var data = await res.json();
-      if (res.ok) { showToast(data.message || "Verification toggled", "success"); if (document.getElementById("uploadsModalList")) loadUploadsModal(); } else showToast(data.error || "Failed");
-    } catch (_) { showToast("Network error"); }
-  }
 
   /* --- Registration Requests --- */
   async function loadRequestsBadge() {
