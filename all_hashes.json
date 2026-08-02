@@ -1,42 +1,26 @@
 {
-  "909ccc39116f0c1947c355ac0f86098008832cd0": {
-    "first_seen": "2026-07-30T12:43:47.076033",
+  "26feeba526e3655f26d65bb7173f43ced3c19a46": {
+    "first_seen": "2026-08-02T07:01:20.852757",
     "origin": {
       "username": "tea",
-      "month": "December",
-      "filename": "HANCOMS07957_AN.pdf"
+      "month": "January",
+      "filename": "Receipt_11Jul2026_054745.pdf"
     }
   },
-  "16e7cecdcbbcf6471d0a55ff0fff2c472f2ff92c": {
-    "first_seen": "2026-07-30T12:43:47.076033",
+  "304fd997b5a26831d01a25eb0729290bac0dedaa": {
+    "first_seen": "2026-08-02T07:01:20.852757",
     "origin": {
       "username": "tea",
-      "month": "December",
-      "filename": "JUNE_4_256_-_Copy.pdf"
+      "month": "January",
+      "filename": "Uber.pdf"
     }
   },
-  "e50286f31e352b888ece0113a148419f345a3e6d": {
-    "first_seen": "2026-07-30T13:01:37.683141",
-    "origin": {
-      "username": "user",
-      "month": "December",
-      "filename": "Receipt_16Jun2026_234243.pdf"
-    }
-  },
-  "1af4d6c2c2097b0abec592b8fd21a15a9f3b6d93": {
-    "first_seen": "2026-07-30T13:07:42.909148",
-    "origin": {
-      "username": "user",
-      "month": "July",
-      "filename": "HNAE26060960_AN_1.pdf"
-    }
-  },
-  "d5d5389114d732757ec9c00f88594b004591fb21": {
-    "first_seen": "2026-07-30T13:42:09.111233",
+  "721c7721d5218d7a6ec403d9b635961c62327aae": {
+    "first_seen": "2026-08-02T07:01:20.852757",
     "origin": {
       "username": "tea",
-      "month": "December",
-      "filename": "08Jun2026.pdf"
+      "month": "January",
+      "filename": "Pathao.pdf"
     }
   }
 }

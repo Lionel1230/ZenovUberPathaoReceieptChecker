@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from concurrent.futures import (
     ThreadPoolExecutor,
     TimeoutError as FuturesTimeoutError,
@@ -215,3 +216,66 @@ def analyze_pdfs(
                 on_progress(completed, total)
 
     return [r for r in results if r is not None]
+
+
+_AMOUNT_RE = re.compile(r"^\s*total[^\d]*([\d][\d,]*(?:\.\d{1,2})?)", re.IGNORECASE)
+
+
+def extract_bill_amount_from_text(text: str) -> float | None:
+    """Parse the total bill amount from a receipt's extracted text.
+
+    Supports Pathao receipts ("Total \u09f3 176.31") and Uber receipts
+    ("Total BDT\u00a0371.19"). Ignores lines like "Sub Total" that only
+    contain the word "Total" after another word.
+    """
+    if not text:
+        return None
+    normalized = text.replace("\xa0", " ").replace("\u09f3", " ")
+    for line in normalized.splitlines():
+        m = _AMOUNT_RE.match(line)
+        if m:
+            try:
+                return float(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+    no_sub_total = re.sub(r"\bsub\s+total\b", " ", normalized, flags=re.IGNORECASE)
+    m = re.search(r"(?<![A-Za-z])total[^\d]{0,20}([\d][\d,]*(?:\.\d{1,2})?)", no_sub_total, re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1).replace(",", ""))
+        except ValueError:
+            return None
+    return None
+
+
+def extract_bill_amount(pdf_path: Path) -> float | None:
+    """Extract the total bill amount from a PDF receipt file."""
+    try:
+        reader = PdfReader(str(pdf_path), strict=False)
+        return extract_bill_amount_from_text(_reader_text(reader))
+    except Exception as exc:
+        logger.warning("Could not extract bill amount from %s: %s", pdf_path.name, exc)
+        return None
+
+
+def extract_bill_amount_from_stream(stream) -> float | None:
+    """Extract the total bill amount from an in-memory PDF stream."""
+    try:
+        stream.seek(0)
+        reader = PdfReader(stream, strict=False)
+        return extract_bill_amount_from_text(_reader_text(reader))
+    except Exception as exc:
+        logger.warning("Could not extract bill amount from stream: %s", exc)
+        return None
+
+
+def _reader_text(reader: PdfReader) -> str:
+    parts: list[str] = []
+    for page in reader.pages:
+        try:
+            text = page.extract_text()
+        except Exception:
+            text = ""
+        if text:
+            parts.append(text)
+    return "\n".join(parts)

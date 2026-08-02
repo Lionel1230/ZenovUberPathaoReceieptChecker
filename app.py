@@ -21,7 +21,7 @@ from flask import Flask, jsonify, redirect, render_template, request, session, u
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 
-from analyzer import analyze_pdfs
+from analyzer import analyze_pdfs, extract_bill_amount, extract_bill_amount_from_stream
 from jobs import JobStatus, job_store
 
 load_dotenv()
@@ -796,16 +796,18 @@ def submit_files():
     for safe_name, dest in saved:
         sha1 = _file_sha1(dest)
         new_sha1s[safe_name] = sha1
+        amount = extract_bill_amount(dest)
         try:
             r = analyze_pdfs([(dest, safe_name)])
             if r:
                 d = _result_to_dict(r[0])
                 d["sha1"] = sha1
+                d["amount"] = amount
                 existing_results[safe_name] = d
             else:
-                existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "", "sha1": sha1}
+                existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "", "sha1": sha1, "amount": amount}
         except Exception:
-            existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "Analysis failed", "sha1": sha1}
+            existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "Analysis failed", "sha1": sha1, "amount": amount}
 
     results_path.write_text(json.dumps(existing_results, indent=2), encoding="utf-8")
 
@@ -864,6 +866,29 @@ def check_duplicates():
     return jsonify({"duplicates": duplicates, "duplicate_info": info})
 
 
+@app.route("/api/extract-amounts", methods=["POST"])
+@login_required
+def extract_amounts():
+    files = request.files.getlist("files")
+    if not files or all(f.filename == "" for f in files):
+        return jsonify({"error": "No files provided"}), 400
+
+    amounts: list[dict] = []
+    for idx, f in enumerate(files):
+        if not f.filename or not f.filename.lower().endswith(".pdf"):
+            continue
+        f.stream.seek(0, 2)
+        size = f.stream.tell()
+        f.stream.seek(0)
+        if size > MAX_FILE_SIZE:
+            amounts.append({"filename": _display_filename(f.filename, idx), "amount": None, "error": "too large"})
+            continue
+        amount = extract_bill_amount_from_stream(f.stream)
+        amounts.append({"filename": _display_filename(f.filename, idx), "amount": amount})
+    logger.info("extract_amounts user=%s files=%d", session.get("username", ""), len(amounts))
+    return jsonify({"amounts": amounts})
+
+
 @app.route("/api/my-submissions", methods=["GET"])
 @login_required
 def my_submissions():
@@ -900,6 +925,55 @@ def my_submissions():
     month_order = {m: i for i, m in enumerate(VALID_MONTHS)}
     files.sort(key=lambda x: (month_order.get(x["month"], 99), x["name"]))
     return jsonify({"files": files})
+
+
+@app.route("/api/my-monthly-totals", methods=["GET"])
+@login_required
+def my_monthly_totals():
+    username = session.get("username", "")
+    if username in ADMIN_ROLES:
+        return jsonify({"totals": {}})
+
+    user_dir = UPLOAD_ROOT / "submissions" / username
+    totals: dict[str, dict] = {}
+
+    if not user_dir.exists():
+        return jsonify({"totals": totals})
+
+    for month_dir in sorted(user_dir.iterdir()):
+        if not month_dir.is_dir() or month_dir.name not in VALID_MONTHS:
+            continue
+        total = 0.0
+        count = 0
+        results_path = month_dir / "_results.json"
+        results: dict = {}
+        if results_path.exists():
+            try:
+                results = json.loads(results_path.read_text(encoding="utf-8"))
+            except Exception:
+                results = {}
+        for fname, info in results.items():
+            amount = info.get("amount")
+            if amount is None:
+                pdf = None
+                for folder in VERDICT_FOLDERS:
+                    candidate = month_dir / folder / fname
+                    if candidate.exists():
+                        pdf = candidate
+                        break
+                if pdf is not None:
+                    amount = extract_bill_amount(pdf)
+            try:
+                amount = float(amount)
+            except (TypeError, ValueError):
+                continue
+            if amount > 0:
+                total += amount
+                count += 1
+        if count > 0:
+            totals[month_dir.name] = {"total": round(total, 2), "count": count}
+
+    return jsonify({"totals": totals})
 
 
 @app.route("/api/my-submissions/<month>/<filename>", methods=["DELETE"])
@@ -1003,6 +1077,15 @@ def admin_uploads():
             verif_map = umeta.get("verification", {})
             verif_key = f"verified_{month_name}_{fname}"
             verified_val = verif_map.get(verif_key)
+            amount = info.get("amount")
+            if amount is None:
+                pdf = month_dir / folder / fname
+                if pdf.exists():
+                    amount = extract_bill_amount(pdf)
+            try:
+                amount = float(amount)
+            except (TypeError, ValueError):
+                amount = None
             file_data.append({
                 "name": fname,
                 "verdict": info.get("verdict", ""),
@@ -1012,8 +1095,18 @@ def admin_uploads():
                 "duplicate": is_duplicate,
                 "month": month_name,
                 "verified": verified_val,
+                "amount": amount,
             })
-        result.append({"username": username, "files": file_data, "count": len(files)})
+        month_totals: dict[str, dict] = {}
+        for f in file_data:
+            m = f["month"]
+            if not f["amount"]:
+                continue
+            entry = month_totals.setdefault(m, {"total": 0.0, "count": 0})
+            entry["total"] += f["amount"]
+            entry["count"] += 1
+        month_totals = {m: {"total": round(v["total"], 2), "count": v["count"]} for m, v in month_totals.items()}
+        result.append({"username": username, "files": file_data, "count": len(files), "month_totals": month_totals})
 
     return jsonify({"users": result})
 

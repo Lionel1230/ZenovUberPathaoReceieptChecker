@@ -465,6 +465,9 @@ body{
 .admin-user-name{font-weight:600;font-size:0.8125rem}
 .admin-file-count{font-size:0.7rem;color:hsl(var(--muted-fg))}
 .admin-file-list{padding:0.25rem}
+.admin-month-group{margin-top:0.35rem}
+.admin-month-group:first-child{margin-top:0}
+.admin-month-header{display:flex;align-items:center;gap:0.25rem;margin-bottom:0.15rem}
 .admin-file-row{
   display:flex;align-items:center;gap:0.35rem;
   padding:0.2rem 0.35rem;border-radius:calc(var(--radius)-2px);

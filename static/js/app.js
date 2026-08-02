@@ -24,6 +24,8 @@
   let stagedFiles = [];
 
   let userData = {};
+  let monthlyTotals = {};
+  let stagedAmounts = {};
   // No debug log in production
 
   async function initUI() {
@@ -320,8 +322,29 @@
     checkStagedDuplicates();
   }
 
+  async function computeStagedAmounts() {
+    stagedAmounts = {};
+    if (stagedFiles.length === 0) {
+      updateMonthTotalBtn(document.getElementById("monthSelect").value);
+      return;
+    }
+    var fd = new FormData();
+    stagedFiles.forEach(function (f) { fd.append("files", f); });
+    try {
+      var res = await fetch("/api/extract-amounts", { method: "POST", body: fd });
+      if (!res.ok) return;
+      var data = await res.json();
+      (data.amounts || []).forEach(function (a, i) {
+        var f = stagedFiles[i];
+        if (!f || typeof a.amount !== "number") return;
+        stagedAmounts[f.name + "|" + f.size] = a.amount;
+      });
+      updateMonthTotalBtn(document.getElementById("monthSelect").value);
+    } catch (_) {}
+  }
+
   function renderStaging() {
-    if (stagedFiles.length === 0) { stagingSection.classList.add("hidden"); return; }
+    if (stagedFiles.length === 0) { stagingSection.classList.add("hidden"); computeStagedAmounts(); return; }
     stagingSection.classList.remove("hidden");
     stagingList.innerHTML = stagedFiles.map(function (f, i) {
       return '<div class="staging-item">' +
@@ -336,6 +359,7 @@
         renderStaging();
       });
     });
+    computeStagedAmounts();
   }
 
   async function submitStagedFiles() {
@@ -343,14 +367,6 @@
     var monthSelect = document.getElementById("monthSelect");
     var month = monthSelect.value;
     if (!month) { showToast("Please select a month before submitting."); monthSelect.focus(); return; }
-
-    var monthBillInput = document.getElementById("monthBillInput");
-    var billVal = parseFloat(monthBillInput.value);
-    if (!isNaN(billVal) && billVal > 0) {
-      try {
-        await fetch("/api/billing/total", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month: month, total_bill: billVal }) });
-      } catch (_) {}
-    }
 
     busy = true;
     var btn = document.getElementById("submitFilesBtn");
@@ -366,11 +382,11 @@
       if (!res.ok) { showToast(data.error || "Submit failed"); busy = false; setLoading(btn, false); return; }
       stagedFiles = [];
       monthSelect.value = "";
-      monthBillInput.value = "";
       renderStaging();
       showToast(data.message, "success");
       loadMySubmissions();
       loadBillList();
+      loadMonthlyTotals();
     } catch (_) { showToast("Network error during submit"); }
     busy = false;
     setLoading(btn, false);
@@ -673,6 +689,7 @@
     var section = document.getElementById("mySubmissionsList");
     section.innerHTML = skeletonHtml(4, "row");
     try {
+      await loadMonthlyTotals();
       var res = await fetch("/api/my-submissions");
       if (res.status === 401) { window.location.href = "/login"; return; }
       if (!res.ok) return;
@@ -690,8 +707,13 @@
       monthOrder.forEach(function (m) {
         var files = grouped[m];
         if (!files) return;
+        var info = monthlyTotals[m] || {};
+        var totalBadge = "";
+        if (info.total > 0) {
+          totalBadge = ' <span class="badge badge-default month-badge" style="margin-left:0.375rem">Total: \u09F3' + info.total.toFixed(2) + '</span>';
+        }
         html += '<div class="month-group">' +
-          '<div class="month-group-header"><span class="badge badge-outline month-badge">' + m + '</span></div>';
+          '<div class="month-group-header"><span class="badge badge-outline month-badge">' + m + '</span>' + totalBadge + '</div>';
         html += files.map(function (f) {
           var sizeMB = (f.size / (1024 * 1024)).toFixed(2);
           var remaining = formatRemaining(f.remaining);
@@ -731,34 +753,51 @@
     try {
       var res = await fetch("/api/my-submissions/" + encodeURIComponent(month) + "/" + encodeURIComponent(filename), { method: "DELETE" });
       var data = await res.json();
-      if (res.ok) { showToast(data.message || "File deleted", "success"); loadMySubmissions(); } else showToast(data.error || "Delete failed");
+      if (res.ok) { showToast(data.message || "File deleted", "success"); loadMySubmissions(); loadMonthlyTotals(); } else showToast(data.error || "Delete failed");
     } catch (_) { showToast("Network error"); }
     if (btn) setLoading(btn, false);
   }
 
   /* --- Billing --- */
-  function loadExistingMonthBill(month) {
-    document.getElementById("monthBillInput").value = "";
+  async function loadMonthlyTotals() {
+    try {
+      var res = await fetch("/api/my-monthly-totals");
+      if (!res.ok) return;
+      var data = await res.json();
+      monthlyTotals = data.totals || {};
+      var month = document.getElementById("monthSelect").value;
+      updateMonthTotalBtn(month);
+    } catch (_) {}
+  }
+
+  function updateMonthTotalBtn(month) {
+    var btn = document.getElementById("monthTotalBtn");
+    if (!btn) return;
+    var total = 0;
+    if (month) {
+      var info = monthlyTotals[month] || {};
+      total += info.total || 0;
+    }
+    Object.keys(stagedAmounts).forEach(function (k) { total += stagedAmounts[k] || 0; });
+    btn.textContent = "Total: \u09F3 " + total.toFixed(2);
   }
 
   async function loadBillList() {
     if (isAdmin) return;
     var list = document.getElementById("billList");
     try {
-      var res = await fetch("/api/billing");
-      if (!res.ok) return;
-      var data = await res.json();
-      var totalBills = data.total_bills || {};
+      await loadMonthlyTotals();
       var monthOrder = ["December","November","October","September","August","July","June","May","April","March","February","January"];
-      var hasAny = monthOrder.some(function (m) { return totalBills[m] > 0; });
+      var hasAny = monthOrder.some(function (m) { return monthlyTotals[m] && monthlyTotals[m].total > 0; });
       if (!hasAny) {
-        list.innerHTML = emptyStateHtml("No billing entries yet. Set a total bill for a month to get started.");
+        list.innerHTML = emptyStateHtml("No billing entries yet. Submit PDFs for a month to see your totals.");
         return;
       }
       var html = "";
       var grandTotal = 0;
       monthOrder.forEach(function (m) {
-        var bill = totalBills[m] || 0;
+        var info = monthlyTotals[m] || {};
+        var bill = info.total || 0;
         if (bill <= 0) return;
         grandTotal += bill;
         html += '<div class="month-group">' +
@@ -772,26 +811,59 @@
     } catch (_) { list.innerHTML = emptyStateHtml("Failed to load billing"); }
   }
 
-  
-  /* --- set month bill toast --- */
-  document.getElementById("setMonthBillBtn").addEventListener("click", async function () {
-    var month = document.getElementById("monthSelect").value;
-    var val = parseFloat(document.getElementById("monthBillInput").value);
-    if (!month) { showToast("Select a month first"); return; }
-    if (isNaN(val) || val <= 0) { showToast("Enter a valid total bill amount"); return; }
-    try {
-      var res = await fetch("/api/billing/total", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month: month, total_bill: val }) });
-      var data = await res.json();
-      if (res.ok) { showToast("Total bill set to \u09F3" + val.toFixed(2) + " for " + month, "success"); loadBillList(); }
-      else { showToast(data.error || "Failed to set bill"); }
-    } catch (_) { showToast("Network error"); }
-  });
-
   document.getElementById("monthSelect").addEventListener("change", function () {
-    loadExistingMonthBill(this.value);
+    updateMonthTotalBtn(this.value);
   });
 
   /* --- Admin Dashboard --- */
+  function adminUserCardHtml(u) {
+    var monthOrder = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    var groups = {};
+    (u.files || []).forEach(function (f) {
+      var m = f.month || "";
+      if (!groups[m]) groups[m] = [];
+      groups[m].push(f);
+    });
+    var body = "";
+    if (u.count > 0) {
+      body = '<div class="admin-file-list">';
+      monthOrder.forEach(function (m) {
+        var files = groups[m];
+        if (!files) return;
+        var totals = (u.month_totals && u.month_totals[m]) || {};
+        var totalBadge = "";
+        if (totals.total > 0) {
+          totalBadge = ' <span class="badge badge-default" style="font-size:0.65rem">Total: \u09F3' + totals.total.toFixed(2) + '</span>';
+        }
+        body += '<div class="admin-month-group"><div class="admin-month-header">' +
+          '<span class="badge badge-outline" style="font-size:0.65rem">' + m + '</span>' + totalBadge +
+          '</div>' + files.map(function (f) {
+            var v = f.verdict || "";
+            var vLabel = verdictLabel(v);
+            var vBadge = badgeClass(v);
+            var source = f.producer || f.creator || "";
+            return '<div class="admin-file-row">' +
+              '<span class="admin-file-name">' + escapeHtml(f.name) + "</span>" +
+              '<span class="badge ' + vBadge + '" style="font-size:0.7rem">' + vLabel + "</span>" +
+              (f.duplicate ? '<span class="badge badge-destructive" style="font-size:0.7rem">Duplicate</span>' : "") +
+              (source ? '<span class="admin-file-source">' + escapeHtml(source) + "</span>" : "") +
+              '<button class="btn-remove" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\">&times;</button>" +
+              "</div>";
+          }).join("") + '</div>';
+      });
+      body += "</div>";
+    }
+    return '<div class="admin-user-card' + (u.count === 0 ? " no-uploads" : "") + '">' +
+      '<div class="admin-user-header">' +
+      '<span class="admin-user-name">' +
+      '<img class="profile-pic profile-pic-sm" src="/api/profile-pic/' + encodeURIComponent(u.username) + '" alt="" onerror="this.style.display=\'none\'" style="vertical-align:middle;margin-right:0.375rem" />' +
+      escapeHtml(u.username) + '</span>' +
+      '<div class="admin-user-actions">' +
+      (u.count > 0 ? '<button class="btn btn-outline btn-sm open-folder-btn" data-open-folder="' + escapeHtml(u.username) + '" title="Open folder">Open Folder</button>' : "") +
+      '<span class="admin-file-count' + (u.count === 0 ? " text-muted" : "") + '">' + (u.count === 0 ? "No uploads" : u.count + " file(s)") + "</span>" +
+      "</div></div>" + body + "</div>";
+  }
+
   async function loadUploadsModal() {
     var list = document.getElementById("uploadsModalList");
     list.innerHTML = skeletonHtml(8, "file-list");
@@ -800,32 +872,7 @@
       if (!res.ok) return;
       var data = await res.json();
       if (data.users.length === 0) { list.innerHTML = emptyStateHtml("No submissions yet", ""); return; }
-      list.innerHTML = data.users.map(function (u) {
-        return '<div class="admin-user-card' + (u.count === 0 ? " no-uploads" : "") + '">' +
-          '<div class="admin-user-header">' +
-          '<span class="admin-user-name">' +
-          '<img class="profile-pic profile-pic-sm" src="/api/profile-pic/' + encodeURIComponent(u.username) + '" alt="" onerror="this.style.display=\'none\'" style="vertical-align:middle;margin-right:0.375rem" />' +
-          escapeHtml(u.username) + '</span>' +
-          '<div class="admin-user-actions">' +
-          (u.count > 0 ? '<button class="btn btn-outline btn-sm open-folder-btn" data-open-folder="' + escapeHtml(u.username) + '" title="Open folder">Open Folder</button>' : "") +
-          '<span class="admin-file-count' + (u.count === 0 ? " text-muted" : "") + '">' + (u.count === 0 ? "No uploads" : u.count + " file(s)") + "</span>" +
-          "</div></div>" +
-          (u.count > 0 ? '<div class="admin-file-list">' + u.files.map(function (f) {
-            var v = f.verdict || "";
-            var vLabel = verdictLabel(v);
-            var vBadge = badgeClass(v);
-            var source = f.producer || f.creator || "";
-            return '<div class="admin-file-row">' +
-              (f.month ? '<span class="badge badge-outline" style="font-size:0.65rem;margin-right:0.5rem">' + escapeHtml(f.month) + '</span>' : "") +
-              '<span class="admin-file-name">' + escapeHtml(f.name) + "</span>" +
-              '<span class="badge ' + vBadge + '" style="font-size:0.7rem">' + vLabel + "</span>" +
-              (f.duplicate ? '<span class="badge badge-destructive" style="font-size:0.7rem">Duplicate</span>' : "") +
-              (source ? '<span class="admin-file-source">' + escapeHtml(source) + "</span>" : "") +
-              '<button class="btn-remove" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\">&times;</button>" +
-              "</div>";
-          }).join("") + "</div>" : "") +
-          "</div>";
-      }).join("");
+      list.innerHTML = data.users.map(adminUserCardHtml).join("");
       list.querySelectorAll("[data-modal-delete]").forEach(function (btn) { btn.addEventListener("click", function () { modalDeleteFile(btn.getAttribute("data-modal-delete")); }); });
       list.querySelectorAll("[data-open-folder]").forEach(function (btn) { btn.addEventListener("click", function () { openUserFolder(btn.dataset.openFolder); }); });
       filterUploadsModal();
@@ -881,32 +928,7 @@
       var data = await res.json();
       if (data.users.length === 0) { list.innerHTML = emptyStateHtml("No submissions yet", ""); return; }
       data.users.sort(function (a, b) { return (a.count === 0 ? 0 : 1) - (b.count === 0 ? 0 : 1); });
-      list.innerHTML = data.users.map(function (u) {
-        return '<div class="admin-user-card' + (u.count === 0 ? " no-uploads" : "") + '">' +
-          '<div class="admin-user-header">' +
-          '<span class="admin-user-name">' +
-          '<img class="profile-pic profile-pic-sm" src="/api/profile-pic/' + encodeURIComponent(u.username) + '" alt="" onerror="this.style.display=\'none\'" style="vertical-align:middle;margin-right:0.375rem" />' +
-          escapeHtml(u.username) + '</span>' +
-          '<div class="admin-user-actions">' +
-          (u.count > 0 ? '<button class="btn btn-outline btn-sm open-folder-btn" data-open-folder="' + escapeHtml(u.username) + '" title="Open folder">Open Folder</button>' : "") +
-          '<span class="admin-file-count' + (u.count === 0 ? " text-muted" : "") + '">' + (u.count === 0 ? "No uploads" : u.count + " file(s)") + "</span>" +
-          "</div></div>" +
-          (u.count > 0 ? '<div class="admin-file-list">' + u.files.map(function (f) {
-            var v = f.verdict || "";
-            var vLabel = verdictLabel(v);
-            var vBadge = badgeClass(v);
-            var source = f.producer || f.creator || "";
-            return '<div class="admin-file-row">' +
-              (f.month ? '<span class="badge badge-outline" style="font-size:0.65rem;margin-right:0.5rem">' + escapeHtml(f.month) + '</span>' : "") +
-              '<span class="admin-file-name">' + escapeHtml(f.name) + "</span>" +
-              '<span class="badge ' + vBadge + '" style="font-size:0.7rem">' + vLabel + "</span>" +
-              (f.duplicate ? '<span class="badge badge-destructive" style="font-size:0.7rem">Duplicate</span>' : "") +
-              (source ? '<span class="admin-file-source">' + escapeHtml(source) + "</span>" : "") +
-              '<button class="btn-remove" data-modal-delete=\'' + escapeHtml(u.username + "/" + f.month + "/" + f.name) + "' title=\"Delete\">&times;</button>" +
-              "</div>";
-          }).join("") + "</div>" : "") +
-          "</div>";
-      }).join("");
+      list.innerHTML = data.users.map(adminUserCardHtml).join("");
       list.querySelectorAll("[data-modal-delete]").forEach(function (btn) { btn.addEventListener("click", function () { modalDeleteFile(btn.getAttribute("data-modal-delete")); }); });
       list.querySelectorAll("[data-open-folder]").forEach(function (btn) { btn.addEventListener("click", function () { openUserFolder(btn.dataset.openFolder); }); });
       filterAdminUploads();
@@ -1081,7 +1103,7 @@
 
   function onId(id, event, fn) { var el = document.getElementById(id); if (el) el.addEventListener(event, fn); }
   onId("submitFilesBtn", "click", submitStagedFiles);
-  onId("clearStagingBtn", "click", function () { stagedFiles = []; document.getElementById("monthSelect").value = ""; document.getElementById("monthBillInput").value = ""; renderStaging(); });
+  onId("clearStagingBtn", "click", function () { stagedFiles = []; document.getElementById("monthSelect").value = ""; updateMonthTotalBtn(""); renderStaging(); });
   onId("refreshMySubmissionsBtn", "click", loadMySubmissions);
   onId("cleanupToggle", "change", toggleCleanup);
   onId("runCleanupBtn", "click", runCleanup);

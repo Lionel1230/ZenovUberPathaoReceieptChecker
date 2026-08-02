@@ -58,6 +58,11 @@ def reset_state(users_file, reg_file, all_hashes_file):
     users_file.write_text("admin:admin\nuser:user\n")
     reg_file.write_text("[]")
     all_hashes_file.write_text("{}")
+    submissions_dir = app_module.UPLOAD_ROOT / "submissions"
+    if submissions_dir.exists():
+        import shutil
+        shutil.rmtree(submissions_dir, ignore_errors=True)
+    submissions_dir.mkdir(parents=True, exist_ok=True)
 
 
 # ─── auth ──────────────────────────────────────────────────────────────
@@ -254,6 +259,28 @@ class TestUploads:
         assert "user" in users
         assert any("report.pdf" in f["name"] for f in users["user"]["files"])
 
+    def test_admin_uploads_month_totals(self, client):
+        user_session(client)
+        folder = app_module.UPLOAD_ROOT / "submissions" / "user" / "July" / "Real"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "a.pdf").write_bytes(b"%PDF-1.4 dummy")
+        (folder / "b.pdf").write_bytes(b"%PDF-1.4 dummy")
+        results_path = app_module.UPLOAD_ROOT / "submissions" / "user" / "July" / "_results.json"
+        results_path.write_text(json.dumps({
+            "a.pdf": {"filename": "a.pdf", "verdict": "real", "amount": 500.0, "sha1": "x1"},
+            "b.pdf": {"filename": "b.pdf", "verdict": "real", "amount": 600.0, "sha1": "x2"},
+        }), encoding="utf-8")
+
+        admin_session(client)
+        r = client.get("/api/admin/uploads")
+        assert r.status_code == 200
+        user = next(u for u in r.get_json()["users"] if u["username"] == "user")
+        assert user["month_totals"]["July"]["total"] == 1100.0
+        assert user["month_totals"]["July"]["count"] == 2
+        amounts = {f["name"]: f["amount"] for f in user["files"]}
+        assert amounts["a.pdf"] == 500.0
+        assert amounts["b.pdf"] == 600.0
+
 
 # ─── registration requests ────────────────────────────────────────────
 
@@ -319,6 +346,88 @@ class TestBilling:
         admin_session(client)
         r = client.get("/api/billing")
         assert r.status_code == 200
+
+
+# ─── amount extraction endpoint ────────────────────────────────────────
+
+class TestExtractAmounts:
+    def test_requires_files(self, client):
+        user_session(client)
+        r = client.post("/api/extract-amounts", data={}, content_type="multipart/form-data")
+        assert r.status_code == 400
+
+    def test_returns_amounts_list(self, client):
+        user_session(client)
+        data = {"files": [(io.BytesIO(b"%PDF-1.4 not really a receipt"), "x.pdf")]}
+        r = client.post("/api/extract-amounts", data=data, content_type="multipart/form-data")
+        assert r.status_code == 200
+        amounts = r.get_json()["amounts"]
+        assert amounts[0]["filename"] == "x.pdf"
+        assert amounts[0]["amount"] is None
+
+    def test_skips_non_pdf(self, client):
+        user_session(client)
+        data = {"files": [(io.BytesIO(b"plain text"), "notes.txt")]}
+        r = client.post("/api/extract-amounts", data=data, content_type="multipart/form-data")
+        assert r.status_code == 200
+        assert r.get_json()["amounts"] == []
+
+    def test_unauthenticated_blocked(self, client):
+        r = client.post("/api/extract-amounts", data={}, content_type="multipart/form-data")
+        assert r.status_code in (302, 401)
+
+
+# ─── monthly totals from submitted receipts ────────────────────────────class TestMonthlyTotals:
+    def _make_submission(self, username, month, filename, amount):
+        folder = app_module.UPLOAD_ROOT / "submissions" / username / month / "Real"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / filename).write_bytes(b"%PDF-1.4 dummy")
+        results_path = app_module.UPLOAD_ROOT / "submissions" / username / month / "_results.json"
+        results = {}
+        if results_path.exists():
+            results = json.loads(results_path.read_text(encoding="utf-8"))
+        results[filename] = {
+            "filename": filename,
+            "verdict": "real",
+            "amount": amount,
+            "sha1": "abc",
+        }
+        results_path.write_text(json.dumps(results), encoding="utf-8")
+
+    def test_no_submissions(self, client):
+        user_session(client)
+        r = client.get("/api/my-monthly-totals")
+        assert r.status_code == 200
+        assert r.get_json()["totals"] == {}
+
+    def test_sums_amounts_per_month(self, client):
+        user_session(client)
+        self._make_submission("user", "January", "a.pdf", 500.0)
+        self._make_submission("user", "January", "b.pdf", 600.0)
+        self._make_submission("user", "February", "c.pdf", 150.5)
+        r = client.get("/api/my-monthly-totals")
+        assert r.status_code == 200
+        totals = r.get_json()["totals"]
+        assert totals["January"]["total"] == 1100.0
+        assert totals["January"]["count"] == 2
+        assert totals["February"]["total"] == 150.5
+
+    def test_skips_missing_amount(self, client):
+        user_session(client)
+        folder = app_module.UPLOAD_ROOT / "submissions" / "user" / "March" / "Real"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "x.pdf").write_bytes(b"%PDF-1.4 dummy")
+        results_path = app_module.UPLOAD_ROOT / "submissions" / "user" / "March" / "_results.json"
+        results_path.write_text(json.dumps({"x.pdf": {"filename": "x.pdf", "verdict": "real"}}), encoding="utf-8")
+        r = client.get("/api/my-monthly-totals")
+        totals = r.get_json()["totals"]
+        assert "March" not in totals or totals["March"]["total"] == 0
+
+    def test_admin_forbidden_view(self, client):
+        admin_session(client)
+        r = client.get("/api/my-monthly-totals")
+        assert r.status_code == 200
+        assert r.get_json()["totals"] == {}
 
 
 # ─── site settings ────────────────────────────────────────────────────
