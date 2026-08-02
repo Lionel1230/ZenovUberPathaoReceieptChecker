@@ -32,37 +32,19 @@ def user_session(client):
     login(client, "user", "user")
 
 
-@pytest.fixture
-def users_file():
-    return app_module.USERS_FILE
-
-
-@pytest.fixture
-def reg_file():
-    return app_module.REG_REQUESTS_FILE
-
-
-@pytest.fixture
-def cleanup_file():
-    return app_module.CLEANUP_TOGGLE_FILE
-
-
-@pytest.fixture
-def all_hashes_file():
-    return app_module.ALL_HASHES_FILE
-
-
-@pytest.fixture(autouse=True)
-def reset_state(users_file, reg_file, all_hashes_file):
-    """Reset shared state files before each test to avoid cross-test pollution."""
-    users_file.write_text("admin:admin\nuser:user\n")
-    reg_file.write_text("[]")
-    all_hashes_file.write_text("{}")
-    submissions_dir = app_module.UPLOAD_ROOT / "submissions"
-    if submissions_dir.exists():
-        import shutil
-        shutil.rmtree(submissions_dir, ignore_errors=True)
-    submissions_dir.mkdir(parents=True, exist_ok=True)
+def wait_for_job(client, job_id, timeout=15):
+    import time
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        r = client.get(f"/api/jobs/{job_id}")
+        assert r.status_code == 200
+        body = r.get_json()
+        last = body
+        if body["status"] in ("completed", "failed"):
+            return body
+        time.sleep(0.05)
+    raise AssertionError(f"job {job_id} did not finish in {timeout}s (last: {last})")
 
 
 # ─── auth ──────────────────────────────────────────────────────────────
@@ -220,6 +202,8 @@ class TestDuplicates:
         }
         r = client.post("/api/submit", data=data, content_type="multipart/form-data")
         assert r.status_code == 200
+        job = wait_for_job(client, r.get_json()["job_id"])
+        assert job["status"] == "completed"
         all_hashes = json.loads(all_hashes_file.read_text())
         assert len(all_hashes) > 0
 

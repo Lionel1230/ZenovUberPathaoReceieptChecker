@@ -47,3 +47,28 @@ class TestExtractAmount:
     def test_integer_total(self):
         text = "Total \u09f3 500\n"
         assert extract_bill_amount_from_text(text) == 500.0
+
+    def test_totals_word_is_not_total(self):
+        assert extract_bill_amount_from_text("Totals 100\n") is None
+
+    def test_total_with_unit_word_is_not_amount(self):
+        assert extract_bill_amount_from_text("Total rides 5\n") is None
+
+    def test_negative_total_rejected(self):
+        assert extract_bill_amount_from_text("Total -5.00\n") is None
+
+    def test_total_mid_paragraph_currency(self):
+        text = "Thanks for riding\nTotal BDT\u00a0371.19\nTrip fare 361.19"
+        assert extract_bill_amount_from_text(text) == 371.19
+
+    def test_total_followed_by_other_text(self):
+        assert extract_bill_amount_from_text("Total \u09f3 100 later more\n") == 100.0
+
+    def test_first_total_line_wins(self):
+        text = "Total \u09f3 10\nGrand Total \u09f3 99\n"
+        assert extract_bill_amount_from_text(text) == 10.0
+
+    def test_currency_symbols(self):
+        assert extract_bill_amount_from_text("Total $12.50\n") == 12.50
+        assert extract_bill_amount_from_text("Total TK 75\n") == 75.0
+        assert extract_bill_amount_from_text("Total 55.25\n") == 55.25

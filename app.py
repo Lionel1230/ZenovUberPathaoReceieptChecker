@@ -60,10 +60,34 @@ MAX_FILES = 200
 DELETE_TIME_LIMIT = 7200  # 2 hours in seconds
 CLEANUP_DAYS = 90
 
+
+def _get_secret_key() -> str:
+    """Return a stable secret key shared across processes/workers.
+
+    Prefers the SECRET_KEY env var; otherwise persists a generated key to
+    a file so every gunicorn worker uses the same value.
+    """
+    env_key = os.environ.get("SECRET_KEY")
+    if env_key:
+        return env_key
+    key_file = BASE_DIR / ".secret_key"
+    try:
+        if key_file.exists():
+            key = key_file.read_text(encoding="utf-8").strip()
+            if key:
+                return key
+        key = secrets.token_hex(32)
+        key_file.write_text(key, encoding="utf-8")
+        return key
+    except OSError:
+        logger.warning("Could not read/write %s — sessions will reset per process", key_file)
+        return secrets.token_hex(32)
+
+
 app = Flask(__name__)
 app.jinja_env.auto_reload = True
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE * MAX_FILES
-app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+app.secret_key = _get_secret_key()
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
@@ -115,6 +139,17 @@ def login_required(f):
     return decorated
 
 
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_FILE_LOCK = threading.RLock()
+
+
+def _valid_username(username: str) -> bool:
+    """Usernames must be safe path components (no '/', '\\', '..')."""
+    if not username or username in (".", ".."):
+        return False
+    return bool(USERNAME_RE.match(username))
+
+
 def _file_sha1(path: Path) -> str:
     h = hashlib.sha1()
     with open(path, "rb") as f:
@@ -124,16 +159,18 @@ def _file_sha1(path: Path) -> str:
 
 
 def _load_all_hashes() -> dict:
-    if ALL_HASHES_FILE.exists():
-        try:
-            return json.loads(ALL_HASHES_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
+    with _FILE_LOCK:
+        if ALL_HASHES_FILE.exists():
+            try:
+                return json.loads(ALL_HASHES_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+        return {}
 
 
 def _save_all_hashes(hashes: dict) -> None:
-    ALL_HASHES_FILE.write_text(json.dumps(hashes, indent=2), encoding="utf-8")
+    with _FILE_LOCK:
+        ALL_HASHES_FILE.write_text(json.dumps(hashes, indent=2), encoding="utf-8")
 
 
 def _add_hashes(hashes: dict, sha1_list: list[str], username: str, month: str, filenames: list[str]) -> dict:
@@ -206,6 +243,8 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "")
         password = request.form.get("password", "")
+        if not _valid_username(username):
+            return render_template("login.html", error="Invalid username or password")
         users = _load_users()
         if users.get(username) == password:
             session.permanent = True
@@ -240,15 +279,17 @@ def logout():
 USER_META_FILE = BASE_DIR / "user_meta.json"
 
 def _load_user_meta() -> dict:
-    if USER_META_FILE.exists():
-        try:
-            return json.loads(USER_META_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
+    with _FILE_LOCK:
+        if USER_META_FILE.exists():
+            try:
+                return json.loads(USER_META_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
 
 def _save_user_meta(meta: dict) -> None:
-    USER_META_FILE.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    with _FILE_LOCK:
+        USER_META_FILE.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
 
 @app.route("/api/me")
@@ -438,6 +479,8 @@ def create_user():
         return jsonify({"error": "Username and password are required"}), 400
     if ":" in username:
         return jsonify({"error": "Username cannot contain ':'"}), 400
+    if not _valid_username(username):
+        return jsonify({"error": "Username can only contain letters, numbers, dots, dashes and underscores"}), 400
 
     users = _load_users()
     if username in users:
@@ -522,16 +565,18 @@ def change_password():
 
 
 def _load_reg_requests() -> list[dict]:
-    if REG_REQUESTS_FILE.exists():
-        try:
-            return json.loads(REG_REQUESTS_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return []
+    with _FILE_LOCK:
+        if REG_REQUESTS_FILE.exists():
+            try:
+                return json.loads(REG_REQUESTS_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return []
 
 
 def _save_reg_requests(reqs: list[dict]) -> None:
-    REG_REQUESTS_FILE.write_text(json.dumps(reqs, indent=2), encoding="utf-8")
+    with _FILE_LOCK:
+        REG_REQUESTS_FILE.write_text(json.dumps(reqs, indent=2), encoding="utf-8")
 
 
 @app.route("/register-request")
@@ -728,6 +773,92 @@ VALID_MONTHS = [
 ]
 
 
+def _run_submit_analysis(job_id: str, saved_items: list[tuple[str, Path]], username: str, month: str) -> None:
+    """Background thread: analyze submitted PDFs, persist results, move files into verdict folders."""
+    try:
+        job_store.update(
+            job_id,
+            status=JobStatus.ANALYZING,
+            total_files=len(saved_items),
+            analyze_progress=0,
+            analyzed_count=0,
+        )
+
+        def on_progress(completed: int, total: int) -> None:
+            pct = int((completed / total) * 100) if total else 100
+            job_store.update(job_id, analyzed_count=completed, analyze_progress=pct)
+
+        user_dir = UPLOAD_ROOT / "submissions" / username / month
+        analyzed = analyze_pdfs([(dest, name) for name, dest in saved_items], on_progress=on_progress)
+        by_name = {r.filename: r for r in analyzed}
+
+        new_entries: dict = {}
+        new_sha1s: dict[str, str] = {}
+        for safe_name, dest in saved_items:
+            sha1 = _file_sha1(dest)
+            new_sha1s[safe_name] = sha1
+            amount = extract_bill_amount(dest)
+            r = by_name.get(safe_name)
+            if r is None:
+                d = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "Analysis failed", "sha1": sha1, "amount": amount}
+            else:
+                d = _result_to_dict(r)
+                d["sha1"] = sha1
+                d["amount"] = amount
+            new_entries[safe_name] = d
+
+        with _FILE_LOCK:
+            results_path = user_dir / "_results.json"
+            existing_results: dict = {}
+            if results_path.exists():
+                try:
+                    existing_results = json.loads(results_path.read_text(encoding="utf-8"))
+                except Exception:
+                    existing_results = {}
+            existing_results.update(new_entries)
+            results_path.write_text(json.dumps(existing_results, indent=2), encoding="utf-8")
+
+            all_hashes = _load_all_hashes()
+            _add_hashes(all_hashes, list(new_sha1s.values()), username, month, list(new_sha1s.keys()))
+
+        sha1_counts = {}
+        for info in existing_results.values():
+            s = info.get("sha1", "")
+            if s:
+                sha1_counts[s] = sha1_counts.get(s, 0) + 1
+        duplicate_sha1s = {sha1 for sha1, count in sha1_counts.items() if count > 1}
+
+        verdict_to_folder = {"real": "Real"}
+        for safe_name, dest in saved_items:
+            sha1 = new_sha1s.get(safe_name, "")
+            if sha1 in duplicate_sha1s:
+                folder_name = "Manual Checks Required"
+            else:
+                verdict = existing_results.get(safe_name, {}).get("verdict", "unknown")
+                folder_name = verdict_to_folder.get(verdict, "Manual Checks Required")
+            target_dir = user_dir / folder_name
+            final_dest = target_dir / dest.name
+            counter = 1
+            while final_dest.exists():
+                stem = dest.stem
+                final_dest = target_dir / f"{stem}_{counter}.pdf"
+                counter += 1
+            dest.rename(final_dest)
+
+        duplicate_files = [s for s, _ in saved_items if new_sha1s.get(s, "") in duplicate_sha1s]
+        summary = {
+            "message": f"{len(saved_items)} file(s) submitted successfully",
+            "files": [s for s, _ in saved_items],
+            "duplicate_files": duplicate_files,
+            "file_count": len(saved_items),
+        }
+        job_store.update(job_id, status=JobStatus.COMPLETED, analyze_progress=100, results=[summary])
+        logger.info("User '%s' submitted %d files", username, len(saved_items))
+    except Exception as exc:
+        logger.exception("Submit analysis failed for job %s", job_id)
+        job_store.update(job_id, status=JobStatus.FAILED, error=str(exc))
+
+
 @app.route("/api/submit", methods=["POST"])
 @login_required
 def submit_files():
@@ -784,64 +915,18 @@ def submit_files():
         file.save(str(dest))
         saved.append((safe_name, dest))
 
-    results_path = user_dir / "_results.json"
-    existing_results = {}
-    if results_path.exists():
-        try:
-            existing_results = json.loads(results_path.read_text(encoding="utf-8"))
-        except Exception:
-            existing_results = {}
+    job = job_store.create()
+    job_store.update(job.id, total_files=len(saved))
+    thread = threading.Thread(
+        target=_run_submit_analysis,
+        args=(job.id, saved, username, month),
+        daemon=True,
+        name=f"submit-{job.id[:8]}",
+    )
+    thread.start()
 
-    new_sha1s = {}
-    for safe_name, dest in saved:
-        sha1 = _file_sha1(dest)
-        new_sha1s[safe_name] = sha1
-        amount = extract_bill_amount(dest)
-        try:
-            r = analyze_pdfs([(dest, safe_name)])
-            if r:
-                d = _result_to_dict(r[0])
-                d["sha1"] = sha1
-                d["amount"] = amount
-                existing_results[safe_name] = d
-            else:
-                existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "", "sha1": sha1, "amount": amount}
-        except Exception:
-            existing_results[safe_name] = {"filename": safe_name, "verdict": "error", "producer": "", "creator": "", "matched_keywords": [], "error_message": "Analysis failed", "sha1": sha1, "amount": amount}
-
-    results_path.write_text(json.dumps(existing_results, indent=2), encoding="utf-8")
-
-    all_hashes = _load_all_hashes()
-    _add_hashes(all_hashes, list(new_sha1s.values()), username, month, list(new_sha1s.keys()))
-
-    sha1_counts = {}
-    for info in existing_results.values():
-        s = info.get("sha1", "")
-        if s:
-            sha1_counts[s] = sha1_counts.get(s, 0) + 1
-    duplicate_sha1s = {sha1 for sha1, count in sha1_counts.items() if count > 1}
-
-    verdict_to_folder = {"real": "Real"}
-    for safe_name, dest in saved:
-        sha1 = new_sha1s.get(safe_name, "")
-        if sha1 in duplicate_sha1s:
-            folder_name = "Manual Checks Required"
-        else:
-            verdict = existing_results.get(safe_name, {}).get("verdict", "unknown")
-            folder_name = verdict_to_folder.get(verdict, "Manual Checks Required")
-        target_dir = user_dir / folder_name
-        final_dest = target_dir / dest.name
-        counter = 1
-        while final_dest.exists():
-            stem = dest.stem
-            final_dest = target_dir / f"{stem}_{counter}.pdf"
-            counter += 1
-        dest.rename(final_dest)
-
-    duplicate_files = [s for s, _ in saved if new_sha1s.get(s, "") in duplicate_sha1s]
-
-    logger.info("User '%s' submitted %d files", username, len(saved))
-    return jsonify({"message": f"{len(saved)} file(s) submitted successfully", "files": [s for s, _ in saved], "duplicate_files": duplicate_files})
+    logger.info("User '%s' queued %d files for submission", username, len(saved))
+    return jsonify({"job_id": job.id, "file_count": len(saved)})
 
 
 @app.route("/api/check-duplicates", methods=["POST"])
@@ -1057,9 +1142,12 @@ def admin_uploads():
                     key = f"{username}/{month_dir.name}/{fname}"
                     sha1_to_files.setdefault(sha1, []).append(key)
 
+    user_meta_all = _load_user_meta()
     for username in sorted(normal_users):
         files = uploaded.get(username, [])
         file_data = []
+        umeta = user_meta_all.get(username, {})
+        verif_map = umeta.get("verification", {})
         for folder, month_name, fname in files:
             month_dir = submissions_dir / username / month_name
             results_path = month_dir / "_results.json"
@@ -1072,9 +1160,6 @@ def admin_uploads():
             info = results.get(fname, {})
             sha1 = info.get("sha1", "")
             is_duplicate = len(sha1_to_files.get(sha1, [])) > 1 if sha1 else False
-            user_meta_all = _load_user_meta()
-            umeta = user_meta_all.get(username, {})
-            verif_map = umeta.get("verification", {})
             verif_key = f"verified_{month_name}_{fname}"
             verified_val = verif_map.get(verif_key)
             amount = info.get("amount")
@@ -1116,6 +1201,8 @@ def admin_uploads():
 def admin_delete_upload(username: str, month: str, filename: str):
     if session.get("username") not in ADMIN_ROLES:
         return jsonify({"error": "Forbidden"}), 403
+    if not _valid_username(username):
+        return jsonify({"error": "Invalid username"}), 400
     if month not in VALID_MONTHS:
         return jsonify({"error": "Invalid month"}), 400
 
@@ -1140,6 +1227,8 @@ def admin_delete_upload(username: str, month: str, filename: str):
 def open_folder(username: str):
     if session.get("username") not in ADMIN_ROLES:
         return jsonify({"error": "Forbidden"}), 403
+    if not _valid_username(username) or username not in _load_users():
+        return jsonify({"error": "Folder not found"}), 404
 
     user_dir = UPLOAD_ROOT / "submissions" / username
     if not user_dir.exists():

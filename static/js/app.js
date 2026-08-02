@@ -383,13 +383,39 @@
       stagedFiles = [];
       monthSelect.value = "";
       renderStaging();
-      showToast(data.message, "success");
-      loadMySubmissions();
-      loadBillList();
-      loadMonthlyTotals();
-    } catch (_) { showToast("Network error during submit"); }
-    busy = false;
-    setLoading(btn, false);
+      setLoading(btn, false);
+      pollSubmitJob(data.job_id);
+    } catch (_) { showToast("Network error during submit"); busy = false; setLoading(btn, false); }
+  }
+
+  function pollSubmitJob(jobId) {
+    if (pollTimer) clearInterval(pollTimer);
+    var btn = document.getElementById("submitFilesBtn");
+    pollTimer = setInterval(async function () {
+      try {
+        var res = await fetch("/api/jobs/" + jobId);
+        if (res.status === 401) { clearInterval(pollTimer); pollTimer = null; window.location.href = "/login"; return; }
+        if (!res.ok) throw new Error("Job not found");
+        var job = await res.json();
+        if (job.status === "completed") {
+          clearInterval(pollTimer); pollTimer = null;
+          var summary = (job.results && job.results[0]) || {};
+          var msg = summary.message || "Submission complete";
+          if (summary.duplicate_files && summary.duplicate_files.length) msg += " \u2014 duplicate(s) flagged for manual check";
+          showToast(msg, "success");
+          loadMySubmissions();
+          loadBillList();
+          loadMonthlyTotals();
+          busy = false;
+          setLoading(btn, false);
+        } else if (job.status === "failed") {
+          clearInterval(pollTimer); pollTimer = null;
+          showToast(job.error || "Submission failed");
+          busy = false;
+          setLoading(btn, false);
+        }
+      } catch (_) { clearInterval(pollTimer); pollTimer = null; showToast("Lost connection while submitting."); busy = false; setLoading(btn, false); }
+    }, 1500);
   }
 
   function uploadFiles(files) {

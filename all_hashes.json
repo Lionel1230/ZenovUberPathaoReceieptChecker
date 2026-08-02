@@ -1,26 +1,10 @@
 {
-  "26feeba526e3655f26d65bb7173f43ced3c19a46": {
-    "first_seen": "2026-08-02T07:01:20.852757",
-    "origin": {
-      "username": "tea",
-      "month": "January",
-      "filename": "Receipt_11Jul2026_054745.pdf"
-    }
-  },
   "304fd997b5a26831d01a25eb0729290bac0dedaa": {
-    "first_seen": "2026-08-02T07:01:20.852757",
+    "first_seen": "2026-08-02T07:34:48.082522",
     "origin": {
-      "username": "tea",
+      "username": "user",
       "month": "January",
       "filename": "Uber.pdf"
-    }
-  },
-  "721c7721d5218d7a6ec403d9b635961c62327aae": {
-    "first_seen": "2026-08-02T07:01:20.852757",
-    "origin": {
-      "username": "tea",
-      "month": "January",
-      "filename": "Pathao.pdf"
     }
   }
 }

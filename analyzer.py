@@ -218,7 +218,17 @@ def analyze_pdfs(
     return [r for r in results if r is not None]
 
 
-_AMOUNT_RE = re.compile(r"^\s*total[^\d]*([\d][\d,]*(?:\.\d{1,2})?)", re.IGNORECASE)
+_AMOUNT_SEP = r"[\s:,.]*"
+_AMOUNT_CURRENCY = r"(?:\u09f3|BDT|TK|Tk|Rs|USD|EUR|GBP|\$|\u20ac|\u00a3)?"
+_AMOUNT_NUM = r"([0-9][\d,]*(?:\.\d{1,2})?)"
+_AMOUNT_RE = re.compile(
+    r"^\s*total\b" + _AMOUNT_SEP + _AMOUNT_CURRENCY + _AMOUNT_SEP + _AMOUNT_NUM + r"\s*$",
+    re.IGNORECASE,
+)
+_FALLBACK_AMOUNT_RE = re.compile(
+    r"(?<![A-Za-z])total\b" + _AMOUNT_SEP + _AMOUNT_CURRENCY + _AMOUNT_SEP + _AMOUNT_NUM,
+    re.IGNORECASE,
+)
 
 
 def extract_bill_amount_from_text(text: str) -> float | None:
@@ -226,11 +236,13 @@ def extract_bill_amount_from_text(text: str) -> float | None:
 
     Supports Pathao receipts ("Total \u09f3 176.31") and Uber receipts
     ("Total BDT\u00a0371.19"). Ignores lines like "Sub Total" that only
-    contain the word "Total" after another word.
+    contain the word "Total" after another word, and words that merely
+    start with "total" (e.g. "Totals 100") or amounts that are not
+    directly after the total label (e.g. "Total rides 5").
     """
     if not text:
         return None
-    normalized = text.replace("\xa0", " ").replace("\u09f3", " ")
+    normalized = text.replace("\xa0", " ")
     for line in normalized.splitlines():
         m = _AMOUNT_RE.match(line)
         if m:
@@ -239,7 +251,7 @@ def extract_bill_amount_from_text(text: str) -> float | None:
             except ValueError:
                 continue
     no_sub_total = re.sub(r"\bsub\s+total\b", " ", normalized, flags=re.IGNORECASE)
-    m = re.search(r"(?<![A-Za-z])total[^\d]{0,20}([\d][\d,]*(?:\.\d{1,2})?)", no_sub_total, re.IGNORECASE)
+    m = _FALLBACK_AMOUNT_RE.search(no_sub_total)
     if m:
         try:
             return float(m.group(1).replace(",", ""))
